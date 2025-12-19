@@ -1,0 +1,25 @@
+{
+  "name": "bikonomi",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "eslint",
+    "seed": "node scripts/seed.mjs"
+  },
+  "dependencies": {
+    "@prisma/client": "^6.19.1",
+    "next": "14.2.5",
+    "react": "18.3.1",
+    "react-dom": "18.3.1"
+  },
+  "devDependencies": {
+    "@types/node": "25.0.3",
+    "@types/react": "19.2.7",
+    "prisma": "^6.19.1",
+    "typescript": "5.9.3"
+  }
+}

@@ -1,0 +1,59 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+model Product {
+  id         String   @id @default(cuid())
+  slug       String   @unique
+  title      String
+views Int @default(0)
+  brand      String?
+  model      String?
+  category   String?
+  imageUrl   String?
+  attributes Json?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  offers     Offer[]
+}
+
+model Offer {
+  id            String   @id @default(cuid())
+  source        String
+  sourceOfferId String
+  url           String
+  sellerName    String?
+  titleRaw      String
+  imageUrl      String?
+  currency      String   @default("TRY")
+  price         Int
+  shippingPrice Int?
+  inStock       Boolean  @default(true)
+  rating        Float?
+  reviewCount   Int?
+  updatedAt     DateTime @updatedAt
+  createdAt     DateTime @default(now())
+
+  productId     String?
+  product       Product? @relation(fields: [productId], references: [id])
+
+  snapshots     PriceSnapshot[]
+
+  @@unique([source, sourceOfferId])
+}
+
+model PriceSnapshot {
+  id            String   @id @default(cuid())
+  offerId        String
+  offer          Offer    @relation(fields: [offerId], references: [id])
+  price          Int
+  shippingPrice  Int?
+  inStock        Boolean
+  capturedAt     DateTime @default(now())
+}
