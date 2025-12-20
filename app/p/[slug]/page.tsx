@@ -60,6 +60,9 @@ export default async function ProductPage({
   return (
     <main className="container">
       <Header q={searchParams?.q} />
+<div style={{ marginTop: 10, padding: 10, border: "2px solid red", fontWeight: 900 }}>
+  DEPLOY TEST: SCOREBADGE
+</div>
 
       <section
         className="heroGrid"
