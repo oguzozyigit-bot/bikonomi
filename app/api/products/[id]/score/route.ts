@@ -1,0 +1,41 @@
+import { NextResponse } from "next/server";
+import { db } from "@/lib/db";
+import { computeBikonomiScoreFromOffers } from "@/lib/bikonomiScore";
+
+export async function POST(
+  _: Request,
+  { params }: { params: { id: string } }
+) {
+  const product = await db.product.findUnique({
+    where: { id: params.id },
+    include: {
+      offers: {
+        select: {
+          price: true,
+          shippingPrice: true,
+          inStock: true,
+          rating: true,
+          reviewCount: true,
+        },
+      },
+    },
+  });
+
+  if (!product) {
+    return NextResponse.json({ error: "Product not found" }, { status: 404 });
+  }
+
+  const { total, breakdown } = computeBikonomiScoreFromOffers(product.offers);
+
+  const updated = await db.product.update({
+    where: { id: product.id },
+    data: { score: total, scoreMeta: breakdown },
+    select: { id: true, score: true },
+  });
+
+  return NextResponse.json({
+    ok: true,
+    productId: updated.id,
+    score: updated.score,
+  });
+}
