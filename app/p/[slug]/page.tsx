@@ -90,6 +90,48 @@ export default async function ProductPage({
           </Link>
 
           <h1 style={{ fontSize: 28, fontWeight: 950, margin: "10px 0 0" }}>{product.title}</h1>
+{(() => {
+  const score = bikonomiScore;
+  const badge =
+    score >= 80
+      ? { text: "ALINABİLİR", bg: "rgba(22,163,74,0.12)", color: "#166534" }
+      : score >= 55
+      ? { text: "TAKİP ET", bg: "rgba(234,179,8,0.14)", color: "#854d0e" }
+      : { text: "BEKLE", bg: "rgba(220,38,38,0.12)", color: "#991b1b" };
+
+  return (
+    <div style={{ marginTop: 10, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+      <div
+        style={{
+          padding: "8px 12px",
+          borderRadius: 999,
+          border: "1px solid #eee",
+          background: badge.bg,
+          color: badge.color,
+          fontWeight: 950,
+          fontSize: 13,
+        }}
+      >
+        {badge.text}
+      </div>
+
+      <div
+        style={{
+          padding: "8px 12px",
+          borderRadius: 12,
+          border: "1px solid #eee",
+          background: "#fff",
+          fontWeight: 950,
+          fontSize: 13,
+        }}
+      >
+        Bikonomi Skoru: {score}/100
+      </div>
+
+      <div style={{ fontSize: 12, opacity: 0.75 }}>(trend • geçmiş • satıcı)</div>
+    </div>
+  );
+})()}
 
           {/* TEST: Bu yazı görünmüyorsa deploy gelmiyordur */}
           <div style={{ marginTop: 8, fontWeight: 900, color: "red" }}>TEST: SCORE BLOCK</div>
