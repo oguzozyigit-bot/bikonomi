@@ -4,7 +4,7 @@ import Header from "@/components/site/Header";
 import Sparkline from "@/components/site/Sparkline";
 import TrendIcon from "@/components/site/TrendIcon";
 import MarketplaceBadge from "@/components/site/MarketplaceBadge";
-import { calculateBikonomiScore } from "@/lib/bikonomiScore";
+import { calculateBikonomiScore } from "../../../lib/bikonomiScore";
 
 /* helpers */
 function fmtTRY(kurus: number) {
