@@ -11,12 +11,18 @@ model Product {
   id         String   @id @default(cuid())
   slug       String   @unique
   title      String
-views Int @default(0)
+
+  views      Int      @default(0)
   brand      String?
   model      String?
   category   String?
   imageUrl   String?
   attributes Json?
+
+  // ✅ Bikonomi Skoru alanları
+  score      Int?     // 0..100
+  scoreMeta  Json?    // breakdown / detay (opsiyonel)
+
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
 
@@ -50,10 +56,11 @@ model Offer {
 
 model PriceSnapshot {
   id            String   @id @default(cuid())
-  offerId        String
-  offer          Offer    @relation(fields: [offerId], references: [id])
-  price          Int
-  shippingPrice  Int?
-  inStock        Boolean
-  capturedAt     DateTime @default(now())
+  offerId       String
+  offer         Offer    @relation(fields: [offerId], references: [id])
+
+  price         Int
+  shippingPrice Int?
+  inStock       Boolean
+  capturedAt    DateTime @default(now())
 }
