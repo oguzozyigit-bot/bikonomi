@@ -4,9 +4,8 @@ import Header from "@/components/site/Header";
 import Sparkline from "@/components/site/Sparkline";
 import TrendIcon from "@/components/site/TrendIcon";
 import MarketplaceBadge from "@/components/site/MarketplaceBadge";
-import { calculateBikonomiScore } from "../../../lib/bikonomiScore";
+import { calculateBikonomiScore } from "@/lib/bikonomiScore";
 
-/* helpers */
 function fmtTRY(kurus: number) {
   return (kurus / 100).toLocaleString("tr-TR", { minimumFractionDigits: 2 }) + " ₺";
 }
@@ -24,17 +23,11 @@ export default async function ProductPage({
   const product = await prisma.product.findUnique({
     where: { slug: params.slug },
     include: {
-      offers: {
-        include: {
-          snapshots: { orderBy: { capturedAt: "desc" }, take: 7 },
-        },
-      },
+      offers: { include: { snapshots: { orderBy: { capturedAt: "desc" }, take: 7 } } },
     },
   });
 
-  if (!product) {
-    return <div style={{ padding: 20 }}>Ürün bulunamadı.</div>;
-  }
+  if (!product) return <div style={{ padding: 20 }}>Ürün bulunamadı.</div>;
 
   await prisma.product.update({
     where: { id: product.id },
@@ -43,15 +36,12 @@ export default async function ProductPage({
 
   const offersSorted = product.offers.slice().sort((a, b) => (a.price ?? 0) - (b.price ?? 0));
   const bestOffer = offersSorted[0];
-
   const snaps = bestOffer?.snapshots ?? [];
+
   const today = snaps[0]?.price ?? bestOffer?.price ?? 0;
   const yesterday = snaps[1]?.price ?? today;
   const deltaPct = yesterday === 0 ? 0 : ((today - yesterday) / yesterday) * 100;
 
-  const spark = snaps.map((s) => s.price).reverse();
-
-  // ✅ Bikonomi Score (bu sayfada kesin hesaplanıyor)
   const bikonomiScore = calculateBikonomiScore({
     deltaPct,
     historyCount: snaps.length,
@@ -64,6 +54,8 @@ export default async function ProductPage({
       : bikonomiScore >= 55
       ? { text: "TAKİP ET", bg: "rgba(234,179,8,0.14)", color: "#854d0e" }
       : { text: "BEKLE", bg: "rgba(220,38,38,0.12)", color: "#991b1b" };
+
+  const spark = snaps.map((s) => s.price).reverse();
 
   return (
     <main className="container">
@@ -98,9 +90,11 @@ export default async function ProductPage({
           </Link>
 
           <h1 style={{ fontSize: 28, fontWeight: 950, margin: "10px 0 0" }}>{product.title}</h1>
-<div style={{ marginTop: 8, fontWeight: 900, color: "red" }}>TEST: SCORE BADGE DEPLOYED</div>
 
-          {/* ✅ Skor rozetleri (burada kesin görünür) */}
+          {/* TEST: Bu yazı görünmüyorsa deploy gelmiyordur */}
+          <div style={{ marginTop: 8, fontWeight: 900, color: "red" }}>TEST: SCORE BLOCK</div>
+
+          {/* Skor rozetleri */}
           <div style={{ marginTop: 10, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
             <div
               style={{
@@ -129,7 +123,7 @@ export default async function ProductPage({
               Bikonomi Skoru: {bikonomiScore}/100
             </div>
 
-            <div style={{ fontSize: 12, opacity: 0.75 }}>(7 gün trend • geçmiş • satıcı sayısı)</div>
+            <div style={{ fontSize: 12, opacity: 0.75 }}>(trend • geçmiş • satıcı)</div>
           </div>
 
           <div style={{ marginTop: 10, display: "flex", alignItems: "center", gap: 10 }}>
@@ -143,60 +137,14 @@ export default async function ProductPage({
         <div style={{ position: "relative", zIndex: 1, display: "grid", justifyItems: "end", alignContent: "center" }}>
           <div style={{ border: "1px solid #eee", background: "rgba(255,255,255,.85)", borderRadius: 18, padding: 10 }}>
             <div style={{ fontWeight: 900, fontSize: 12, opacity: 0.7, marginBottom: 6 }}>Son 7 kayıt</div>
-            <div style={{ opacity: 0.9 }}>
-              <Sparkline values={spark.length ? spark : [today]} />
-            </div>
+            <Sparkline values={spark.length ? spark : [today]} />
           </div>
         </div>
       </section>
 
       <section style={{ marginTop: 14, border: "1px solid #eee", borderRadius: 16, padding: 14, background: "#fff" }}>
-        <div className="grid3" style={{ gridTemplateColumns: "repeat(3, minmax(0, 1fr))" }}>
-          <div style={{ border: "1px solid #f0f0f0", borderRadius: 14, padding: 12 }}>
-            <div style={{ opacity: 0.75, fontSize: 12 }}>Bugün</div>
-            <div style={{ fontWeight: 950, fontSize: 20, marginTop: 4 }}>{fmtTRY(today)}</div>
-          </div>
+        <div style={{ fontWeight: 950 }}>🛒 Pazaryerleri</div>
 
-          <div style={{ border: "1px solid #f0f0f0", borderRadius: 14, padding: 12 }}>
-            <div style={{ opacity: 0.75, fontSize: 12 }}>Dün</div>
-            <div style={{ fontWeight: 900, fontSize: 18, marginTop: 4 }}>{fmtTRY(yesterday)}</div>
-          </div>
-
-          <div style={{ border: "1px solid #f0f0f0", borderRadius: 14, padding: 12 }}>
-            <div style={{ opacity: 0.75, fontSize: 12 }}>Değişim</div>
-            <div style={{ fontWeight: 950, fontSize: 18, marginTop: 4 }}>
-              <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-                <TrendIcon deltaPct={deltaPct} /> {pct(deltaPct)}
-              </span>
-            </div>
-          </div>
-        </div>
-
-        {bestOffer?.url && (
-          <div style={{ marginTop: 12, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-            <MarketplaceBadge source={bestOffer.source} />
-            <a
-              href={bestOffer.url}
-              target="_blank"
-              rel="nofollow sponsored noopener"
-              style={{
-                display: "inline-flex",
-                alignItems: "center",
-                gap: 8,
-                padding: "10px 12px",
-                borderRadius: 12,
-                border: "1px solid #ddd",
-                background: "#fff",
-                fontWeight: 900,
-                textDecoration: "none",
-              }}
-            >
-              En iyi fiyatı gör →
-            </a>
-          </div>
-        )}
-
-        <div style={{ marginTop: 14, fontWeight: 950 }}>🛒 Pazaryerleri</div>
         <div style={{ display: "grid", gap: 8, marginTop: 8 }}>
           {offersSorted.map((o) => (
             <div
