@@ -98,6 +98,7 @@ export default async function ProductPage({
           </Link>
 
           <h1 style={{ fontSize: 28, fontWeight: 950, margin: "10px 0 0" }}>{product.title}</h1>
+<div style={{ marginTop: 8, fontWeight: 900, color: "red" }}>TEST: SCORE BADGE DEPLOYED</div>
 
           {/* ✅ Skor rozetleri (burada kesin görünür) */}
           <div style={{ marginTop: 10, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>

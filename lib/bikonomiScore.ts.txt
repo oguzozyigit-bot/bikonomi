@@ -1,0 +1,31 @@
+type ScoreInput = {
+  deltaPct: number;      // fiyat değişimi %
+  historyCount: number; // fiyat geçmişi sayısı
+  offerCount: number;   // satıcı sayısı
+};
+
+export function calculateBikonomiScore({
+  deltaPct,
+  historyCount,
+  offerCount,
+}: ScoreInput) {
+  let score = 50;
+
+  // fiyat değişimi
+  if (Math.abs(deltaPct) < 3) score += 15;
+  else if (Math.abs(deltaPct) < 10) score += 5;
+  else score -= 10;
+
+  // fiyat geçmişi (ne kadar çok, o kadar güven)
+  score += Math.min(historyCount, 20);
+
+  // satıcı sayısı
+  score += Math.min(offerCount * 5, 15);
+
+  // sınırlar
+  if (score < 0) score = 0;
+  if (score > 100) score = 100;
+
+  return Math.round(score);
+}
+
