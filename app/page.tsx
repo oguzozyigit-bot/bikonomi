@@ -1,3 +1,4 @@
+<div style={{fontSize:12, opacity:0.6}}>deploy-tag: 6a80813</div>
 import Link from "next/link";
 import { prisma } from "@/lib/db";
 import Header from "@/components/site/Header";
