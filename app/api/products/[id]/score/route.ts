@@ -39,3 +39,6 @@ export async function POST(
     score: updated.score,
   });
 }
+export async function GET(_: Request, { params }: { params: { id: string } }) {
+  return NextResponse.json({ ok: true, id: params.id, hint: "Use POST to compute score" });
+}
