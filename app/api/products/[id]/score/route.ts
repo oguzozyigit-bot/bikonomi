@@ -2,30 +2,31 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { computeBikonomiScoreFromOffers } from "@/lib/bikonomiScore";
 
-type OfferInput = {
+// computeBikonomiScoreFromOffers => OfferLite[] bekliyor.
+// OfferLite alanlarını burada garanti ediyoruz (özellikle inStock: boolean).
+type OfferLiteInput = {
   price: number;
-  shippingPrice?: number | null;
-  inStock?: boolean | null;
-  rating?: number | null;
-  reviewCount?: number | null;
+  shippingPrice: number;
+  inStock: boolean;
+  rating: number;
+  reviewCount: number;
 };
 
-function normalizeOffer(o: any): OfferInput | null {
+function normalizeOffer(o: any): OfferLiteInput | null {
   const price = Number(o?.price);
   if (!Number.isFinite(price) || price <= 0) return null;
 
-  const shippingPrice =
-    o?.shippingPrice == null ? null : Number(o.shippingPrice);
-  const rating = o?.rating == null ? null : Number(o.rating);
-  const reviewCount =
-    o?.reviewCount == null ? null : Number(o.reviewCount);
+  const shippingPriceRaw = Number(o?.shippingPrice ?? 0);
+  const ratingRaw = Number(o?.rating ?? 0);
+  const reviewCountRaw = Number(o?.reviewCount ?? 0);
 
   return {
     price,
-    shippingPrice: Number.isFinite(shippingPrice as number) ? shippingPrice : null,
-    inStock: o?.inStock == null ? null : Boolean(o.inStock),
-    rating: Number.isFinite(rating as number) ? rating : null,
-    reviewCount: Number.isFinite(reviewCount as number) ? reviewCount : null,
+    shippingPrice: Number.isFinite(shippingPriceRaw) ? shippingPriceRaw : 0,
+    // stok bilgisi gelmediyse "true" varsayıyoruz (bilinmeyeni cezalandırmamak için)
+    inStock: o?.inStock === undefined || o?.inStock === null ? true : Boolean(o.inStock),
+    rating: Number.isFinite(ratingRaw) ? ratingRaw : 0,
+    reviewCount: Number.isFinite(reviewCountRaw) ? reviewCountRaw : 0,
   };
 }
 
@@ -34,13 +35,13 @@ export async function POST(
   { params }: { params: { id: string } }
 ) {
   try {
-    // Body (opsiyonel) — entegrasyon gelmeden test için
+    // 1) Body'den offers (opsiyonel)
     const body = await req.json().catch(() => ({} as any));
-    const payloadOffers: OfferInput[] = Array.isArray(body?.offers)
-      ? (body.offers.map(normalizeOffer).filter(Boolean) as OfferInput[])
+    const payloadOffers: OfferLiteInput[] = Array.isArray(body?.offers)
+      ? (body.offers.map(normalizeOffer).filter(Boolean) as OfferLiteInput[])
       : [];
 
-    // DB’den ürünü çek
+    // 2) DB'den ürünü ve teklifleri çek
     const product = await prisma.product.findUnique({
       where: { id: params.id },
       include: {
@@ -56,7 +57,7 @@ export async function POST(
       },
     });
 
-    // Ürün yoksa ama payload offers varsa: payload ile hesapla (404 yerine)
+    // 3) Ürün yoksa ama payload offers varsa: payload ile score hesapla (404 yerine 200)
     if (!product) {
       if (payloadOffers.length === 0) {
         return NextResponse.json({ error: "Product not found" }, { status: 404 });
@@ -73,11 +74,12 @@ export async function POST(
       });
     }
 
-    // DB offers + payload offers (payload varsa ekle)
-    const mergedOffers: OfferInput[] = [
-      ...(product.offers ?? []),
-      ...payloadOffers,
-    ];
+    // 4) DB offers + payload offers => hepsini normalize et (inStock boolean garanti)
+    const dbOffers: OfferLiteInput[] = (product.offers ?? [])
+      .map(normalizeOffer)
+      .filter(Boolean) as OfferLiteInput[];
+
+    const mergedOffers: OfferLiteInput[] = [...dbOffers, ...payloadOffers];
 
     if (mergedOffers.length === 0) {
       return NextResponse.json(
@@ -86,10 +88,10 @@ export async function POST(
       );
     }
 
-    // Score hesapla
+    // 5) Score hesapla
     const { total, breakdown } = computeBikonomiScoreFromOffers(mergedOffers);
 
-    // DB’ye yaz
+    // 6) DB’ye yaz
     const updated = await prisma.product.update({
       where: { id: product.id },
       data: {
@@ -107,7 +109,6 @@ export async function POST(
     });
   } catch (err: any) {
     console.error("score POST error", err);
-
     return NextResponse.json(
       { error: "Score compute failed", detail: err?.message ?? String(err) },
       { status: 500 }
