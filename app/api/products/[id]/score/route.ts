@@ -14,8 +14,7 @@ function normalizeOffer(o: any): OfferInput | null {
   const price = Number(o?.price);
   if (!Number.isFinite(price) || price <= 0) return null;
 
-  const shippingPrice =
-    o?.shippingPrice == null ? null : Number(o.shippingPrice);
+  const shippingPrice = o?.shippingPrice == null ? null : Number(o.shippingPrice);
   const rating = o?.rating == null ? null : Number(o.rating);
   const reviewCount = o?.reviewCount == null ? null : Number(o.reviewCount);
 
@@ -33,13 +32,11 @@ export async function POST(
   { params }: { params: { id: string } }
 ) {
   try {
-    // 1) Body (opsiyonel) — entegrasyon gelmeden test için
     const body = await req.json().catch(() => ({} as any));
     const payloadOffers: OfferInput[] = Array.isArray(body?.offers)
       ? (body.offers.map(normalizeOffer).filter(Boolean) as OfferInput[])
       : [];
 
-    // 2) DB’den ürünü çek
     const product = await prisma.product.findUnique({
       where: { id: params.id },
       include: {
@@ -55,7 +52,6 @@ export async function POST(
       },
     });
 
-    // 3) Ürün yoksa ama payload offers varsa: payload ile hesapla (404 yerine)
     if (!product) {
       if (payloadOffers.length === 0) {
         return NextResponse.json({ error: "Product not found" }, { status: 404 });
@@ -72,8 +68,6 @@ export async function POST(
       });
     }
 
-    // 4) DB offers + payload offers (payload varsa ekle)
-    // DB offers zaten sayısal ve seçilmiş alanlar; tekrar normalize etmiyoruz.
     const mergedOffers: OfferInput[] = [
       ...(product.offers ?? []),
       ...payloadOffers,
@@ -86,15 +80,13 @@ export async function POST(
       );
     }
 
-    // 5) Score hesapla
     const { total, breakdown } = computeBikonomiScoreFromOffers(mergedOffers);
 
-    // 6) DB’ye yaz
     const updated = await prisma.product.update({
       where: { id: product.id },
       data: {
         score: total,
-        scoreMeta: breakdown as any, // Prisma Json ise OK
+        scoreMeta: breakdown as any,
       },
       select: { id: true, score: true },
     });
@@ -107,7 +99,6 @@ export async function POST(
     });
   } catch (err: any) {
     console.error("score POST error", err);
-
     return NextResponse.json(
       { error: "Score compute failed", detail: err?.message ?? String(err) },
       { status: 500 }
@@ -126,13 +117,7 @@ export async function GET(
     hint: "Use POST to compute score",
     example: {
       offers: [
-        {
-          price: 1299.9,
-          shippingPrice: 0,
-          inStock: true,
-          rating: 4.6,
-          reviewCount: 1287,
-        },
+        { price: 1299.9, shippingPrice: 0, inStock: true, rating: 4.6, reviewCount: 1287 },
       ],
     },
   });
