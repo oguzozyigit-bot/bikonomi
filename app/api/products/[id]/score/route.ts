@@ -1,12 +1,12 @@
 import { NextResponse } from "next/server";
-import { db } from "@/lib/db";
+import { prisma } from "@/lib/db";
 import { computeBikonomiScoreFromOffers } from "@/lib/bikonomiScore";
 
 export async function POST(
   _: Request,
   { params }: { params: { id: string } }
 ) {
-  const product = await db.product.findUnique({
+  const product = await prisma.product.findUnique({
     where: { id: params.id },
     include: {
       offers: {
@@ -27,7 +27,7 @@ export async function POST(
 
   const { total, breakdown } = computeBikonomiScoreFromOffers(product.offers);
 
-  const updated = await db.product.update({
+  const updated = await prisma.product.update({
     where: { id: product.id },
     data: { score: total, scoreMeta: breakdown },
     select: { id: true, score: true },
@@ -39,6 +39,14 @@ export async function POST(
     score: updated.score,
   });
 }
-export async function GET(_: Request, { params }: { params: { id: string } }) {
-  return NextResponse.json({ ok: true, id: params.id, hint: "Use POST to compute score" });
+
+export async function GET(
+  _: Request,
+  { params }: { params: { id: string } }
+) {
+  return NextResponse.json({
+    ok: true,
+    id: params.id,
+    hint: "Use POST to compute score",
+  });
 }
