@@ -14,9 +14,11 @@ function normalizeOffer(o: any): OfferInput | null {
   const price = Number(o?.price);
   if (!Number.isFinite(price) || price <= 0) return null;
 
-  const shippingPrice = o?.shippingPrice == null ? null : Number(o.shippingPrice);
+  const shippingPrice =
+    o?.shippingPrice == null ? null : Number(o.shippingPrice);
   const rating = o?.rating == null ? null : Number(o.rating);
-  const reviewCount = o?.reviewCount == null ? null : Number(o.reviewCount);
+  const reviewCount =
+    o?.reviewCount == null ? null : Number(o.reviewCount);
 
   return {
     price,
@@ -32,11 +34,13 @@ export async function POST(
   { params }: { params: { id: string } }
 ) {
   try {
+    // Body (opsiyonel) — entegrasyon gelmeden test için
     const body = await req.json().catch(() => ({} as any));
     const payloadOffers: OfferInput[] = Array.isArray(body?.offers)
       ? (body.offers.map(normalizeOffer).filter(Boolean) as OfferInput[])
       : [];
 
+    // DB’den ürünü çek
     const product = await prisma.product.findUnique({
       where: { id: params.id },
       include: {
@@ -52,6 +56,7 @@ export async function POST(
       },
     });
 
+    // Ürün yoksa ama payload offers varsa: payload ile hesapla (404 yerine)
     if (!product) {
       if (payloadOffers.length === 0) {
         return NextResponse.json({ error: "Product not found" }, { status: 404 });
@@ -68,6 +73,7 @@ export async function POST(
       });
     }
 
+    // DB offers + payload offers (payload varsa ekle)
     const mergedOffers: OfferInput[] = [
       ...(product.offers ?? []),
       ...payloadOffers,
@@ -80,8 +86,10 @@ export async function POST(
       );
     }
 
+    // Score hesapla
     const { total, breakdown } = computeBikonomiScoreFromOffers(mergedOffers);
 
+    // DB’ye yaz
     const updated = await prisma.product.update({
       where: { id: product.id },
       data: {
@@ -99,6 +107,7 @@ export async function POST(
     });
   } catch (err: any) {
     console.error("score POST error", err);
+
     return NextResponse.json(
       { error: "Score compute failed", detail: err?.message ?? String(err) },
       { status: 500 }
@@ -117,7 +126,13 @@ export async function GET(
     hint: "Use POST to compute score",
     example: {
       offers: [
-        { price: 1299.9, shippingPrice: 0, inStock: true, rating: 4.6, reviewCount: 1287 },
+        {
+          price: 1299.9,
+          shippingPrice: 0,
+          inStock: true,
+          rating: 4.6,
+          reviewCount: 1287,
+        },
       ],
     },
   });
