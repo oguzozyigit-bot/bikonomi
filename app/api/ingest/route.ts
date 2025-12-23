@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
-import { upsertProductWithOffers } from "@/lib/dbWrite";
-import { normalizeFromUrl } from "@/lib/sourceRouter";
+import { upsertProductWithOffers } from "../../../lib/dbWrite";
+import { normalizeFromUrl } from "../../../lib/sourceRouter";
 
 export async function POST(req: Request) {
   const body = await req.json().catch(() => null);

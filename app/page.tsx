@@ -2,8 +2,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { ALLOWED_DOMAINS } from "@/lib/allowedDomains";
-
+import { ALLOWED_DOMAINS } from "../lib/allowedDomains";
 export default function HomePage() {
   const [input, setInput] = useState("");
   const [err, setErr] = useState<string | null>(null);
