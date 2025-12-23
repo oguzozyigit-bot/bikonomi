@@ -1,12 +1,12 @@
-export const dynamic = "force-dynamic";
-
-import { Suspense } from "react";
+// app/analyze/page.tsx  (SERVER COMPONENT)
 import AnalyzeClient from "./AnalyzeClient";
 
-export default function AnalyzePage() {
-  return (
-    <Suspense fallback={<div className="p-6">Analiz ediliyor…</div>}>
-      <AnalyzeClient />
-    </Suspense>
-  );
+export default async function Page({
+  searchParams,
+}: {
+  searchParams: Promise<{ url?: string }>;
+}) {
+  const sp = await searchParams;
+  const url = typeof sp?.url === "string" ? sp.url : "";
+  return <AnalyzeClient url={url} />;
 }
