@@ -1,56 +1,21 @@
-model Product {
-  id              String   @id @default(cuid())
-  source          String   // "trendyol" | "amazon" | "hb" ...
-  sourceProductId String?  // kaynaktaki ürün id (varsa)
-  url             String   @unique
-  title           String
-  category        String?
-  currency        String   @default("TRY")
-
-  cheapestPrice   Float?
-  cheapestStore   String?
-  score           Int      @default(0)
-  marketDeltaPct  Float?   // opsiyon
-
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
-
-  offers          Offer[]
-  pricePoints     PricePoint[]
-
-  @@index([source])
+generator client {
+  provider = "prisma-client-js"
 }
 
-model Offer {
+datasource db {
+  provider = "postgresql"
+}
+
+model ProductAlert {
   id          String   @id @default(cuid())
   productId   String
-  store       String
-  price       Float
-  shipping    Float?   @default(0)
-  inStock     Boolean  @default(true)
-  sellerName  String?
-  sellerScore Float?
-  url         String?
-
+  email       String
+  priceTarget Float?
+  scoreTarget Int?
+  isActive    Boolean  @default(true)
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
-  product     Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
-
   @@index([productId])
-  @@index([store])
-}
-
-model PricePoint {
-  id        String   @id @default(cuid())
-  productId String
-  date      DateTime
-  price     Float
-  currency  String   @default("TRY")
-
-  createdAt DateTime @default(now())
-
-  product   Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
-
-  @@index([productId, date])
+  @@index([email])
 }

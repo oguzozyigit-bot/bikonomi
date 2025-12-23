@@ -34,3 +34,7 @@ export default async function ProductPage({ params }: Props) {
     </div>
   );
 }
+import ProductAlertCard from "@/components/ProductAlertCard";
+
+// ... sayfanın içinde, Alternatifler bölümünün altına:
+<ProductAlertCard productId={product.id} />

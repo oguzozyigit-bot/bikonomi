@@ -1,19 +1,28 @@
-﻿export const runtime = "nodejs";
-
+﻿// app/api/analyze/route.ts
 import { NextResponse } from "next/server";
+import { isAllowed, normalizeUrl } from "../../../lib/allowedDomains";
 
-export async function POST(req: Request) {
-  const body = await req.json().catch(() => ({}));
-  const url = (body?.url ?? "").toString().trim();
-  if (!url) return NextResponse.json({ ok: false, error: "url_required" }, { status: 400 });
+export async function GET(req: Request) {
+  const { searchParams } = new URL(req.url);
+  const raw = searchParams.get("url") || "";
 
-  return NextResponse.json({
-    ok: true,
-    id: crypto.randomUUID(),
-    score: 72
-  });
-}
+  let url: URL;
+  try {
+    url = normalizeUrl(raw);
+  } catch {
+    return NextResponse.json({ error: "Geçersiz URL" }, { status: 400 });
+  }
 
-export async function GET() {
-  return NextResponse.json({ ok: true });
-}
+  if (!isAllowed(url)) {
+    return NextResponse.json(
+      { error: "Bu site şu an desteklenmiyor (izinli listede değil)." },
+      { status: 400 }
+    );
+  }
+
+  const demo = {
+    title: "Bluetooth Kulaklık (Demo)",
+    cheapestPrice: 1249,
+    currency: "₺",
+    cheapestStore: "A Mağazası",
+    score:

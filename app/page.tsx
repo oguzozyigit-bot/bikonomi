@@ -1,124 +1,158 @@
-export const runtime = "nodejs";
-export const dynamic = "force-dynamic";
-
 // app/page.tsx
-import Link from "next/link";
-import LinkPasteBox from "@/components/LinkPasteBox";
+"use client";
 
-function badgeText(score: number) {
-  if (score >= 85) return "Çok Mantıklı";
-  if (score >= 70) return "Mantıklı Seçim";
-  if (score >= 50) return "Düşünülebilir";
-  return "Mantıksız";
-}
+import { useMemo, useState } from "react";
+import { ALLOWED_DOMAINS } from "@/lib/allowedDomains";
 
-type FeaturedItem = {
-  id: string;
-  title: string;
-  score: number;
-  cheapestPrice: number | string;
-};
+export default function HomePage() {
+  const [input, setInput] = useState("");
+  const [err, setErr] = useState<string | null>(null);
 
-export default async function HomePage() {
-  let items: FeaturedItem[] = [];
+  const allowedPretty = useMemo(() => {
+    // ikonu sonra koyarız; şimdilik net liste
+    const unique = Array.from(new Set(ALLOWED_DOMAINS.map(d => d.replace(/^www\./, ""))));
+    return unique;
+  }, []);
 
-  // ✅ Prisma'yı build anında import etmiyoruz
-  // ✅ DB varsa runtime'da dinamik import ile çekiyoruz
-  if (process.env.DATABASE_URL) {
+  function onSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    setErr(null);
+
     try {
-      const mod = await import("@/lib/db");
-      const prisma = mod.prisma;
+      const url = new URL(input.trim());
+      const host = url.hostname.toLowerCase();
+      const ok = ALLOWED_DOMAINS.includes(host as any);
 
-      items = await prisma.product.findMany({
-        orderBy: { score: "desc" },
-        take: 6,
-        where: { score: { gte: 70 } },
-        select: {
-          id: true,
-          title: true,
-          score: true,
-          cheapestPrice: true,
-        },
-      });
+      if (!ok) {
+        setErr("Bu link şu an desteklenmiyor. Lütfen izinli sitelerden bir link yapıştır.");
+        return;
+      }
+
+      // Analiz sayfasına gönder
+      const qp = new URLSearchParams({ url: url.toString() });
+      window.location.href = `/analyze?${qp.toString()}`;
     } catch {
-      items = [];
+      setErr("Link geçersiz görünüyor. Lütfen tam URL yapıştır (https:// ile).");
     }
   }
 
-  const firstId = items?.[0]?.id ?? "p1";
-
   return (
-    <main className="mx-auto max-w-6xl px-4 py-8">
-      {/* HERO */}
-      <section className="rounded-3xl border bg-white p-8 shadow-sm">
-        <div className="max-w-2xl">
-          <LinkPasteBox />
+    <main className="min-h-screen bg-white text-zinc-900">
+      <header className="mx-auto max-w-5xl px-4 py-5 flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <div className="h-10 w-10 rounded-2xl bg-zinc-900" />
+          <div className="leading-tight">
+            <div className="text-lg font-semibold">Bikonomi</div>
+            <div className="text-xs text-zinc-500">Linki yapıştır, analiz etsin.</div>
+          </div>
+        </div>
+        <nav className="text-sm text-zinc-600 flex gap-4">
+          <a className="hover:text-zinc-900" href="#izinli">İzinli Siteler</a>
+          <a className="hover:text-zinc-900" href="#nasil">Nasıl Çalışır</a>
+        </nav>
+      </header>
 
-          <div className="mt-6 flex flex-wrap gap-3">
-            <Link
-              href={`/products/${firstId}`}
-              className="rounded-2xl bg-gray-900 px-4 py-2 text-sm font-semibold text-white"
-            >
-              Ürünü gör
-            </Link>
+      <section className="mx-auto max-w-5xl px-4 pt-10 pb-8">
+        <div className="grid gap-8 md:grid-cols-2 items-center">
+          <div>
+            <h1 className="text-4xl md:text-5xl font-semibold tracking-tight">
+              Aynı ürün, farklı fiyatlar.
+              <span className="block">Bikonomi bakar.</span>
+            </h1>
+            <p className="mt-3 text-zinc-600">
+              Yalnızca <span className="font-medium text-zinc-900">izinli sitelerden</span> gelen linkleri analiz eder.
+            </p>
 
-            <a
-              href="#today"
-              className="rounded-2xl border px-4 py-2 text-sm font-semibold text-gray-900"
-            >
-              Bugün mantıklı olanlar
-            </a>
+            <form onSubmit={onSubmit} className="mt-6">
+              <div className="flex flex-col sm:flex-row gap-3">
+                <input
+                  value={input}
+                  onChange={(e) => setInput(e.target.value)}
+                  placeholder="Ürün linkini buraya yapıştır (Trendyol / Hepsiburada / n11 / Amazon TR)"
+                  className="w-full rounded-2xl border border-zinc-200 px-4 py-3 outline-none focus:ring-2 focus:ring-zinc-900"
+                />
+                <button
+                  type="submit"
+                  className="rounded-2xl bg-zinc-900 px-5 py-3 text-white font-medium hover:bg-zinc-800"
+                >
+                  Analiz Et
+                </button>
+              </div>
+              {err && (
+                <div className="mt-3 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+                  {err}
+                </div>
+              )}
+              <div className="mt-3 text-xs text-zinc-500">
+                İpucu: Linkin sonunda ne olursa olsun sorun değil — önemli olan alan adı.
+              </div>
+            </form>
+          </div>
+
+          {/* Sağ “mock” */}
+          <div className="rounded-3xl border border-zinc-200 p-5 shadow-sm">
+            <div className="flex items-center justify-between">
+              <div className="text-sm font-medium">Bikonomi Sonuç</div>
+              <div className="text-xs text-zinc-500">Demo</div>
+            </div>
+            <div className="mt-4 space-y-3">
+              <div className="rounded-2xl bg-zinc-50 p-4 border border-zinc-100">
+                <div className="text-sm font-medium">Bluetooth Kulaklık</div>
+                <div className="mt-1 text-2xl font-semibold">₺1.249</div>
+                <div className="mt-1 text-xs text-zinc-500">En ucuz: A Mağazası</div>
+              </div>
+              <div className="rounded-2xl bg-white p-4 border border-zinc-200">
+                <div className="flex items-center justify-between">
+                  <div className="text-sm font-medium">Bikonomi Skoru</div>
+                  <div className="text-sm font-semibold">82/100</div>
+                </div>
+                <div className="mt-2 h-2 rounded-full bg-zinc-100 overflow-hidden">
+                  <div className="h-2 w-[82%] bg-zinc-900" />
+                </div>
+              </div>
+              <div className="rounded-2xl bg-white p-4 border border-zinc-200 text-sm text-zinc-600">
+                Link yapıştırınca gerçek analiz sayfasına yönlendireceğiz.
+              </div>
+            </div>
           </div>
         </div>
       </section>
 
-      {/* TODAY */}
-      <section id="today" className="mt-10">
-        <div className="flex items-end justify-between gap-4">
-          <h2 className="text-xl font-bold">Bugün Mantıklı Olanlar</h2>
-          <span className="text-sm text-gray-500">Score’a göre seçilmiş</span>
-        </div>
-
-        <div className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {items.map((p) => (
-            <Link
-              key={p.id}
-              href={`/products/${p.id}`}
-              className="group rounded-3xl border bg-white p-4 shadow-sm hover:shadow-md"
-            >
-              <div className="relative aspect-[3/2] overflow-hidden rounded-2xl bg-gray-100">
-                <img
-                  src={`https://picsum.photos/seed/${encodeURIComponent(p.id)}/600/400`}
-                  alt={p.title}
-                  className="h-full w-full object-cover transition-transform group-hover:scale-[1.02]"
-                  loading="lazy"
-                />
-              </div>
-
-              <div className="mt-3 flex items-center justify-between gap-3">
-                <div className="min-w-0">
-                  <div className="truncate text-sm font-semibold text-gray-900">
-                    {p.title}
-                  </div>
-                  <div className="mt-1 text-sm text-gray-600">
-                    {Number(p.cheapestPrice).toLocaleString("tr-TR")} ₺
-                  </div>
-                </div>
-
-                <span className="inline-flex items-center rounded-full bg-emerald-100 px-2.5 py-1 text-xs font-semibold text-emerald-800">
-                  {p.score} · {badgeText(p.score)}
-                </span>
-              </div>
-            </Link>
+      <section id="izinli" className="mx-auto max-w-5xl px-4 py-8">
+        <h2 className="text-lg font-semibold">İzinli Siteler</h2>
+        <p className="mt-1 text-sm text-zinc-600">
+          Şimdilik bu alan adlarını destekliyoruz. Listeyi büyüteceğiz.
+        </p>
+        <div className="mt-4 flex flex-wrap gap-2">
+          {allowedPretty.map((d) => (
+            <span key={d} className="rounded-full border border-zinc-200 px-3 py-1 text-sm text-zinc-700">
+              {d}
+            </span>
           ))}
         </div>
-
-        {items.length === 0 ? (
-          <div className="mt-6 rounded-2xl border bg-white p-4 text-sm text-gray-600">
-            Veri yok (DB bağlı değilse normal). Link yapıştırıp analiz et; katalog büyüdükçe burası dolacak.
-          </div>
-        ) : null}
       </section>
+
+      <section id="nasil" className="mx-auto max-w-5xl px-4 py-10">
+        <h2 className="text-lg font-semibold">Nasıl çalışır?</h2>
+        <div className="mt-4 grid gap-3 md:grid-cols-3">
+          <Card title="1) Linki yapıştır" text="Ürünü nerede gördüysen buraya bırak." />
+          <Card title="2) Doğrula" text="İzinli site + ürün sayfası kontrolü yapılır." />
+          <Card title="3) Sonucu gör" text="Karşılaştırma, skor ve özet tek ekranda." />
+        </div>
+      </section>
+
+      <footer className="mx-auto max-w-5xl px-4 py-8 text-xs text-zinc-500">
+        © {new Date().getFullYear()} Bikonomi
+      </footer>
     </main>
+  );
+}
+
+function Card({ title, text }: { title: string; text: string }) {
+  return (
+    <div className="rounded-3xl border border-zinc-200 p-5">
+      <div className="text-sm font-semibold">{title}</div>
+      <div className="mt-2 text-sm text-zinc-600">{text}</div>
+    </div>
   );
 }
