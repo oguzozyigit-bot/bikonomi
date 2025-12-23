@@ -21,8 +21,17 @@ export async function GET(req: Request) {
   }
 
   const demo = {
-    title: "Bluetooth Kulaklık (Demo)",
+    title: `Analiz (Demo): ${url.hostname.replace(/^www\./, "")}`,
     cheapestPrice: 1249,
     currency: "₺",
     cheapestStore: "A Mağazası",
-    score:
+    score: 82,
+    offers: [
+      { store: "A Mağazası", price: 1249, inStock: true, url: url.toString() },
+      { store: "B Mağazası", price: 1399, inStock: true, url: url.toString() },
+      { store: "C Mağazası", price: 1499, inStock: false, url: url.toString() },
+    ],
+  };
+
+  return NextResponse.json(demo);
+}
