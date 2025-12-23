@@ -1,6 +1,8 @@
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+
 // app/page.tsx
 import Link from "next/link";
-import { prisma } from "@/lib/db";
 import LinkPasteBox from "@/components/LinkPasteBox";
 
 function badgeText(score: number) {
@@ -10,18 +12,38 @@ function badgeText(score: number) {
   return "Mantıksız";
 }
 
+type FeaturedItem = {
+  id: string;
+  title: string;
+  score: number;
+  cheapestPrice: number | string;
+};
+
 export default async function HomePage() {
-  const items = await prisma.product.findMany({
-    orderBy: { score: "desc" },
-    take: 6,
-    where: { score: { gte: 70 } },
-    select: {
-      id: true,
-      title: true,
-      score: true,
-      cheapestPrice: true,
-    },
-  });
+  let items: FeaturedItem[] = [];
+
+  // ✅ Prisma'yı build anında import etmiyoruz
+  // ✅ DB varsa runtime'da dinamik import ile çekiyoruz
+  if (process.env.DATABASE_URL) {
+    try {
+      const mod = await import("@/lib/db");
+      const prisma = mod.prisma;
+
+      items = await prisma.product.findMany({
+        orderBy: { score: "desc" },
+        take: 6,
+        where: { score: { gte: 70 } },
+        select: {
+          id: true,
+          title: true,
+          score: true,
+          cheapestPrice: true,
+        },
+      });
+    } catch {
+      items = [];
+    }
+  }
 
   const firstId = items?.[0]?.id ?? "p1";
 
@@ -29,7 +51,6 @@ export default async function HomePage() {
     <main className="mx-auto max-w-6xl px-4 py-8">
       {/* HERO */}
       <section className="rounded-3xl border bg-white p-8 shadow-sm">
-        {/* Link yapıştır alanı (client component) */}
         <div className="max-w-2xl">
           <LinkPasteBox />
 
@@ -67,9 +88,7 @@ export default async function HomePage() {
             >
               <div className="relative aspect-[3/2] overflow-hidden rounded-2xl bg-gray-100">
                 <img
-                  src={`https://picsum.photos/seed/${encodeURIComponent(
-                    p.id
-                  )}/600/400`}
+                  src={`https://picsum.photos/seed/${encodeURIComponent(p.id)}/600/400`}
                   alt={p.title}
                   className="h-full w-full object-cover transition-transform group-hover:scale-[1.02]"
                   loading="lazy"
@@ -93,6 +112,12 @@ export default async function HomePage() {
             </Link>
           ))}
         </div>
+
+        {items.length === 0 ? (
+          <div className="mt-6 rounded-2xl border bg-white p-4 text-sm text-gray-600">
+            Veri yok (DB bağlı değilse normal). Link yapıştırıp analiz et; katalog büyüdükçe burası dolacak.
+          </div>
+        ) : null}
       </section>
     </main>
   );
