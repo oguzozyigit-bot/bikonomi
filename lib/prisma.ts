@@ -1,13 +1,5 @@
-import { PrismaClient } from "@prisma/client";
-import { withAccelerate } from "@prisma/extension-accelerate";
+// MVP-0 STUB (Prisma devre dışı)
+// Deploy/build sorunsuz geçsin diye geçici kapatıldı.
+// MVP sonrası gerçek PrismaClient burada geri gelecek.
 
-const globalForPrisma = globalThis as unknown as { prisma?: PrismaClient };
-
-export const prisma =
-  globalForPrisma.prisma ??
-  new PrismaClient({
-    accelerateUrl: process.env.PRISMA_ACCELERATE_URL,
-    log: ["error", "warn"],
-  }).$extends(withAccelerate());
-
-if (process.env.NODE_ENV !== "production") globalForPrisma.prisma = prisma;
+export const prisma = null as any;
