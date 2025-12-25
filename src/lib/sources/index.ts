@@ -1,6 +1,7 @@
+import type { FetchedProduct } from "./types";
 import { fetchTrendyol } from "./trendyol";
 import { fetchHepsiburada } from "./hepsiburada";
-import type { FetchedProduct } from "./types";
+import { fetchAmazon } from "./amazon";
 
 export function detectSource(u: URL): FetchedProduct["source"] {
   const h = u.hostname.replace(/^www\./, "");
@@ -14,6 +15,7 @@ export async function fetchByUrl(url: string): Promise<FetchedProduct> {
   const u = new URL(url);
   const source = detectSource(u);
 
+  if (source === "amazon") return fetchAmazon(u);
   if (source === "trendyol") return fetchTrendyol(u);
   if (source === "hepsiburada") return fetchHepsiburada(u);
 

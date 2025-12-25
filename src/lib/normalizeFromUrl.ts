@@ -1,13 +1,16 @@
 import { fetchByUrl } from "@/lib/sources";
 
 /**
- * Eski normalizeHepsiburada / normalizeTrendyol gibi fonksiyonlar kaldırıldı.
- * Bu dosya artık tek bir normalize/parse giriş noktası sağlar.
+ * Eski normalize* fonksiyonlarını kaldırdık.
+ * Artık tek giriş noktası: fetchByUrl(url)
+ * - kaynağı tespit eder
+ * - uygun parser'ı çağırır (hepsiburada/trendyol/amazon)
  */
 export async function normalizeFromUrl(rawUrl: string) {
   const url = rawUrl.trim();
   if (!url) throw new Error("URL boş");
 
+  // URL doğrulama
   let u: URL;
   try {
     u = new URL(url);
