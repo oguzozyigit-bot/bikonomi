@@ -5,21 +5,4 @@ generator client {
 datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
-  // opsiyonel:
-  // directUrl = env("DIRECT_DATABASE_URL")
-}
-}
-
-model ProductAlert {
-  id          String   @id @default(cuid())
-  productId   String
-  email       String
-  priceTarget Float?
-  scoreTarget Int?
-  isActive    Boolean  @default(true)
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-
-  @@index([productId])
-  @@index([email])
 }
