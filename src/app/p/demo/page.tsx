@@ -35,9 +35,7 @@ export default async function DemoPage({
     );
   }
 
-  const api = `${process.env.NEXT_PUBLIC_SITE_URL ?? ""}/api/fetch?url=${encodeURIComponent(
-    url
-  )}`;
+const api = `/api/fetch?url=${encodeURIComponent(url)}`;
 
   let data: FetchResp | null = null;
   try {
