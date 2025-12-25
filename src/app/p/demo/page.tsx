@@ -8,13 +8,28 @@ type PageProps = {
 export default async function DemoPage({ searchParams }: PageProps) {
   const rawUrl = (searchParams?.url || "").trim();
 
+  // ✅ DEBUG MARKER: Bu yazıyı görmüyorsan, canlıda eski kod çalışıyor demektir.
+  const debugStamp = new Date().toISOString();
+
   if (!rawUrl) {
     return (
       <main className="mx-auto max-w-3xl px-4 py-10">
+        <div
+          style={{
+            padding: 12,
+            border: "2px solid red",
+            marginBottom: 12,
+            borderRadius: 12,
+            fontFamily: "ui-sans-serif, system-ui",
+          }}
+        >
+          NEW DEMO V2 — {debugStamp}
+        </div>
+
         <div className="rounded-2xl border bg-white p-6">
           <h1 className="text-xl font-semibold">Bikonomi</h1>
           <p className="mt-2 opacity-70">
-            URL yok. Ana sayfadan link yapıştırıp gel.
+            URL yok. /p/demo?url=... ile gel.
           </p>
         </div>
       </main>
@@ -46,7 +61,20 @@ export default async function DemoPage({ searchParams }: PageProps) {
 
   return (
     <main className="mx-auto max-w-3xl px-4 py-8">
-      {/* ÜST: minimal header */}
+      {/* ✅ DEBUG MARKER */}
+      <div
+        style={{
+          padding: 12,
+          border: "2px solid red",
+          marginBottom: 12,
+          borderRadius: 12,
+          fontFamily: "ui-sans-serif, system-ui",
+        }}
+      >
+        NEW DEMO V2 — {debugStamp}
+      </div>
+
+      {/* Header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
           <div className="h-10 w-10 rounded-2xl border bg-white" />
@@ -63,7 +91,7 @@ export default async function DemoPage({ searchParams }: PageProps) {
         </a>
       </div>
 
-      {/* HATA */}
+      {/* Error */}
       {err && (
         <div className="mt-4 rounded-2xl border bg-white p-5">
           <div className="text-sm font-medium text-red-600">Hata</div>
@@ -71,7 +99,7 @@ export default async function DemoPage({ searchParams }: PageProps) {
         </div>
       )}
 
-      {/* ÜRÜN KARTI */}
+      {/* Product Card */}
       <div className="mt-5 grid gap-4 md:grid-cols-2">
         <div className="rounded-2xl border bg-white p-6">
           <div className="text-xs uppercase tracking-wide opacity-60">
@@ -87,9 +115,6 @@ export default async function DemoPage({ searchParams }: PageProps) {
               <div className="text-xs opacity-60">Fiyat</div>
               <div className="mt-1 text-lg font-semibold">
                 {price === null ? "—" : price} {currency}
-              </div>
-              <div className="mt-1 text-xs opacity-60">
-                (Fiyat null ise sonraki adımda çözeceğiz)
               </div>
             </div>
 
@@ -111,12 +136,11 @@ export default async function DemoPage({ searchParams }: PageProps) {
             rel="noreferrer"
             className="mt-4 inline-flex w-full items-center justify-center gap-2 rounded-xl bg-green-600 px-4 py-3 font-medium text-white hover:bg-green-700"
           >
-            Ürüne git
-            <span aria-hidden>→</span>
+            Ürüne git <span aria-hidden>→</span>
           </a>
         </div>
 
-        {/* SAĞ: URL + debug */}
+        {/* Right panel */}
         <div className="rounded-2xl border bg-white p-6">
           <div className="text-sm font-semibold">Gelen URL</div>
           <div className="mt-2 break-all rounded-xl border bg-gray-50 p-3 text-xs">
@@ -129,14 +153,10 @@ export default async function DemoPage({ searchParams }: PageProps) {
           </div>
 
           <div className="mt-4 text-xs opacity-60">
-            Bu sayfa artık demo ürünü göstermiyor. Sadece URL’den gelen veriyi basar.
+            Eğer bu sayfada NEW DEMO V2 yazısını görmüyorsan, canlıda eski deploy
+            gösteriliyor demektir.
           </div>
         </div>
-      </div>
-
-      {/* ALT: eski demo blokları KALDIRILDI */}
-      <div className="mt-8 text-center text-xs opacity-50">
-        Demo placeholder kaldırıldı ✅
       </div>
     </main>
   );
