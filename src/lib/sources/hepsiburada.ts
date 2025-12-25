@@ -1,166 +1,138 @@
 import * as cheerio from "cheerio";
-import type { FetchedProduct } from "./types";
-import { fetchHtml } from "./http";
 
-function toNumber(x: any): number | null {
-  if (x == null) return null;
-  const s = String(x).trim().replace(/\./g, "").replace(",", ".");
-  const n = Number(s);
-  return Number.isFinite(n) ? n : null;
-}
+type FetchResult = {
+  source: "hepsiburada";
+  product: {
+    title: string;
+    price: number | null;
+    currency: "TRY";
+    url: string;
+    image: string | null;
+  };
+  debug?: Record<string, any>;
+};
 
-function pickFirst(...vals: Array<string | undefined | null>): string {
-  for (const v of vals) if (v && v.trim()) return v.trim();
-  return "";
-}
-
-// Deep JSON içinde fiyat arar
-function findPriceDeep(obj: any): number | null {
-  const seen = new Set<any>();
-  const keys = new Set([
-    "price",
-    "currentprice",
-    "saleprice",
-    "discountedprice",
-    "finalprice",
-    "amount",
-    "value",
-    "listingprice",
-    "buyboxprice",
-  ]);
-
-  const stack: any[] = [obj];
-
-  while (stack.length) {
-    const cur = stack.pop();
-    if (!cur || typeof cur !== "object") continue;
-    if (seen.has(cur)) continue;
-    seen.add(cur);
-
-    if (Array.isArray(cur)) {
-      for (const it of cur) stack.push(it);
-      continue;
-    }
-
-    for (const [k, v] of Object.entries(cur)) {
-      const kk = k.toLowerCase();
-
-      if (keys.has(kk)) {
-        const n = toNumber(v);
-        if (n != null && n > 0 && n < 1_000_000) return n;
-
-        if (v && typeof v === "object") {
-          const n2 =
-            toNumber((v as any).amount) ??
-            toNumber((v as any).value) ??
-            toNumber((v as any).price);
-          if (n2 != null && n2 > 0 && n2 < 1_000_000) return n2;
-        }
-      }
-
-      if (v && typeof v === "object") stack.push(v);
-    }
+function pickMeta($: cheerio.CheerioAPI, selectors: string[]): string | null {
+  for (const sel of selectors) {
+    const v = $(sel).attr("content") || $(sel).attr("value");
+    if (v && v.trim()) return v.trim();
   }
-
   return null;
 }
 
-export async function fetchHepsiburada(u: URL): Promise<FetchedProduct> {
-  const url = u.toString();
-  const r = await fetchHtml(url);
+function parsePriceLike(input: string | null): number | null {
+  if (!input) return null;
 
-  if (!r.ok) {
-    throw new Error(
-      `HB_HTTP_${r.status} ${r.statusText} ${r.blockedHint ?? ""}`.trim()
-    );
+  let s = input
+    .replace(/\s/g, "")
+    .replace(/TL|TRY|₺/gi, "")
+    .trim();
+
+  if (s.includes(".") && s.includes(",")) {
+    s = s.replace(/\./g, "").replace(",", ".");
+  } else if (s.includes(",")) {
+    s = s.replace(",", ".");
   }
 
-  const $ = cheerio.load(r.html);
+  s = s.replace(/[^\d.]/g, "");
+  const n = Number(s);
+  if (!Number.isFinite(n)) return null;
+  if (n <= 0) return null;
+  return n;
+}
 
-  const fallbackTitle =
-    pickFirst(
-      $('meta[property="og:title"]').attr("content"),
-      $("title").text()
-    ) || "Hepsiburada ürün";
-
-  // DOM fiyat denemeleri
-  const domPriceText =
-    $('[data-test-id="price-current-price"]').first().text().trim() ||
-    $('[data-test-id="price-value"]').first().text().trim() ||
-    $('[itemprop="price"]').attr("content")?.trim() ||
-    $('meta[itemprop="price"]').attr("content")?.trim() ||
-    $('meta[property="product:price:amount"]').attr("content")?.trim();
-
-  const domPrice = domPriceText ? toNumber(domPriceText) : null;
-
-  // JSON-LD denemeleri
-  let jsonLdPrice: number | null = null;
-  let jsonLdCurrency: string | null = null;
-  let jsonLdTitle: string | null = null;
-
-  const scripts = $('script[type="application/ld+json"]').toArray();
-  for (const s of scripts) {
-    const raw = $(s).text()?.trim();
-    if (!raw) continue;
-
+function parseJsonLd($: cheerio.CheerioAPI): any[] {
+  const out: any[] = [];
+  $('script[type="application/ld+json"]').each((_, el) => {
+    const txt = $(el).text()?.trim();
+    if (!txt) return;
     try {
-      const parsed = JSON.parse(raw);
-      const arr = Array.isArray(parsed) ? parsed : [parsed];
+      const parsed = JSON.parse(txt);
+      if (Array.isArray(parsed)) out.push(...parsed);
+      else out.push(parsed);
+    } catch {}
+  });
+  return out;
+}
 
-      for (const j of arr) {
-        const type = String(j?.["@type"] ?? "").toLowerCase();
-        if (type && !type.includes("product")) continue;
+function extractFromLd(ld: any[]): { title?: string; image?: string; price?: number } {
+  for (const node of ld) {
+    const n = node?.["@graph"] ? node["@graph"] : [node];
+    for (const item of n) {
+      const type = item?.["@type"];
+      if (type === "Product" || (Array.isArray(type) && type.includes("Product"))) {
+        const title = item?.name;
+        let image: string | undefined;
+        if (typeof item?.image === "string") image = item.image;
+        else if (Array.isArray(item?.image) && item.image[0]) image = item.image[0];
 
-        jsonLdTitle = jsonLdTitle ?? (j?.name ? String(j.name) : null);
+        const offers = item?.offers;
+        const pRaw = offers?.price ?? offers?.lowPrice ?? offers?.highPrice;
+        const price = parsePriceLike(typeof pRaw === "string" || typeof pRaw === "number" ? String(pRaw) : null) ?? undefined;
 
-        const offers = Array.isArray(j?.offers) ? j.offers[0] : j?.offers;
-        const p1 = toNumber(offers?.price);
-        const p2 = toNumber(offers?.priceSpecification?.price);
-        const p = p1 ?? p2;
-        if (p != null) jsonLdPrice = jsonLdPrice ?? p;
-
-        const cur =
-          offers?.priceCurrency ?? offers?.priceSpecification?.priceCurrency;
-        if (cur) jsonLdCurrency = jsonLdCurrency ?? String(cur);
+        return { title, image, price };
       }
-    } catch {
-      // ignore
     }
   }
+  return {};
+}
 
-  // NEXT_DATA / state içinden fiyat denemesi
-  let statePrice: number | null = null;
-  const nextData = $("script#__NEXT_DATA__").first().text()?.trim();
-  if (nextData) {
-    try {
-      const j = JSON.parse(nextData);
-      statePrice =
-        findPriceDeep(j?.props) ??
-        findPriceDeep(j?.pageProps) ??
-        findPriceDeep(j);
-    } catch {
-      // ignore
-    }
-  }
+export async function fetchHepsiburada(url: string): Promise<FetchResult> {
+  const res = await fetch(url, {
+    method: "GET",
+    headers: {
+      "user-agent":
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123 Safari/537.36",
+      "accept-language": "tr-TR,tr;q=0.9,en;q=0.8",
+      accept: "text/html,application/xhtml+xml",
+    },
+    cache: "no-store",
+  });
 
-  // Regex fallback (çok kaba)
-  if (statePrice == null) {
-    const m = r.html.match(/"price"\s*:\s*([0-9]+(?:\.[0-9]+)?)/i);
-    if (m?.[1]) {
-      const n = toNumber(m[1]);
-      if (n != null && n > 0 && n < 1_000_000) statePrice = n;
-    }
-  }
+  const html = await res.text();
+  const $ = cheerio.load(html);
 
-  const price = jsonLdPrice ?? domPrice ?? statePrice;
+  const metaTitle =
+    pickMeta($, ['meta[property="og:title"]', 'meta[name="twitter:title"]']) ||
+    $("title").first().text().trim() ||
+    "";
+
+  const metaImage = pickMeta($, [
+    'meta[property="og:image"]',
+    'meta[property="og:image:secure_url"]',
+    'meta[name="twitter:image"]',
+    'meta[name="twitter:image:src"]',
+  ]);
+
+  // HB meta price bazen farklı gelebiliyor
+  const metaPriceRaw = pickMeta($, [
+    'meta[property="product:price:amount"]',
+    'meta[property="og:price:amount"]',
+    'meta[name="price"]',
+    'meta[itemprop="price"]',
+  ]);
+  const metaPrice = parsePriceLike(metaPriceRaw);
+
+  const ld = parseJsonLd($);
+  const fromLd = extractFromLd(ld);
+
+  const price = fromLd.price ?? metaPrice ?? null;
+  const image = fromLd.image ?? metaImage ?? null;
 
   return {
     source: "hepsiburada",
-    url,
-    title: pickFirst(jsonLdTitle, fallbackTitle),
-    price,
-    currency: jsonLdCurrency ?? "TRY",
-    rating: null,
-    ratingCount: null,
+    product: {
+      title: (fromLd.title ?? metaTitle ?? "").trim(),
+      price,
+      currency: "TRY",
+      url,
+      image,
+    },
+    debug: {
+      status: res.status,
+      hasLd: ld.length > 0,
+      metaPriceRaw: metaPriceRaw ?? null,
+      metaImage: metaImage ?? null,
+    },
   };
 }
