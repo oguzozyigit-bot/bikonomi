@@ -1,160 +1,128 @@
-"use client";
+import Image from "next/image";
 
-import { Suspense, useEffect, useMemo, useState } from "react";
-import { useSearchParams } from "next/navigation";
-
-type FetchResult = {
+type FetchResp = {
   source?: string;
-  title?: string;
   product?: {
     title?: string;
-    price?: number | string | null;
+    price?: number | null;
     currency?: string;
     url?: string;
-    image?: string;
+    image?: string | null;
   };
-  score?: number;
+  error?: string;
+  message?: string;
 };
 
-function fixUrl(u?: string | null) {
-  if (!u) return undefined;
-  if (u.startsWith("//")) return `https:${u}`;
-  return u;
-}
+export default async function DemoPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ url?: string }>;
+}) {
+  const sp = await searchParams;
+  const url = sp?.url?.trim();
 
-function formatPrice(price: unknown, currency: string) {
-  if (price === null || price === undefined) return null;
-
-  // "1.299,90" gibi string gelirse aynen yaz
-  if (typeof price === "string") {
-    const p = price.trim();
-    if (!p) return null;
-    return `${p} ${currency}`;
+  if (!url) {
+    return (
+      <main className="mx-auto max-w-3xl p-6">
+        <h1 className="text-2xl font-bold">Demo</h1>
+        <p className="mt-2 text-sm text-muted-foreground">
+          URL parametresi yok. Örnek:
+        </p>
+        <pre className="mt-3 rounded-lg bg-muted p-3 text-xs overflow-auto">
+          /p/demo?url=https://www.trendyol.com/...
+        </pre>
+      </main>
+    );
   }
 
-  if (typeof price === "number" && Number.isFinite(price)) {
-    try {
-      return (
-        new Intl.NumberFormat("tr-TR", { maximumFractionDigits: 2 }).format(price) +
-        ` ${currency}`
-      );
-    } catch {
-      return `${price} ${currency}`;
-    }
+  const api = `${process.env.NEXT_PUBLIC_SITE_URL ?? ""}/api/fetch?url=${encodeURIComponent(
+    url
+  )}`;
+
+  let data: FetchResp | null = null;
+  try {
+    const res = await fetch(api, { cache: "no-store" });
+    data = (await res.json()) as FetchResp;
+  } catch (e: any) {
+    data = { error: "fetch_failed", message: e?.message ?? "unknown" };
   }
 
-  return null;
-}
+  const p = data?.product;
 
-function DemoInner() {
-  const searchParams = useSearchParams();
-  const url = searchParams.get("url");
-
-  const [data, setData] = useState<FetchResult | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (!url) {
-      setError("URL bulunamadı");
-      setLoading(false);
-      return;
-    }
-
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 15000);
-
-    fetch(`/api/fetch?url=${encodeURIComponent(url)}`, {
-      cache: "no-store",
-      signal: controller.signal,
-    })
-      .then((res) => res.json())
-      .then((json: FetchResult) => {
-        setData(json);
-      })
-      .catch((e) => {
-        setError(e?.name === "AbortError" ? "Zaman aşımı (15sn)" : "Ürün alınamadı");
-      })
-      .finally(() => {
-        clearTimeout(timeout);
-        setLoading(false);
-      });
-
-    return () => {
-      clearTimeout(timeout);
-      controller.abort();
-    };
-  }, [url]);
-
-  if (loading) return <div className="p-6">Yükleniyor…</div>;
-  if (error) return <div className="p-6 text-red-500">{error}</div>;
-
-  const source = (data?.source || "KAYNAK").toUpperCase();
-  const title = data?.product?.title || data?.title || "Başlık bulunamadı";
-
-  const currency = data?.product?.currency || "TRY";
-  const priceText = useMemo(
-    () => formatPrice(data?.product?.price, currency),
-    [data?.product?.price, currency]
-  );
-
-  const productUrl = data?.product?.url || url || "#";
-  const imageUrl = fixUrl(data?.product?.image);
-
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  const score = typeof data?.score === "number" ? data.score : null;
+  const title = p?.title ?? "Başlık bulunamadı";
+  const price =
+    typeof p?.price === "number" ? p.price : null;
+  const currency = p?.currency ?? "TRY";
+  const image = p?.image ?? null;
 
   return (
-    <main className="min-h-[60vh] p-6 flex items-start justify-center">
-      <div className="w-full max-w-3xl border rounded-2xl p-6">
-        <div className="text-xs tracking-widest text-zinc-500">{source}</div>
+    <main className="mx-auto max-w-3xl p-6">
+      <h1 className="text-2xl font-bold">Bikonomi Demo</h1>
 
-        <h1 className="mt-2 text-2xl font-bold leading-tight">{title}</h1>
+      {data?.error ? (
+        <div className="mt-4 rounded-lg border p-4">
+          <div className="font-semibold">API Hatası</div>
+          <pre className="mt-2 text-xs overflow-auto">
+            {JSON.stringify(data, null, 2)}
+          </pre>
+        </div>
+      ) : (
+        <div className="mt-4 rounded-2xl border p-4">
+          <div className="grid gap-4 md:grid-cols-[160px_1fr]">
+            <div className="relative h-40 w-40 overflow-hidden rounded-xl border bg-muted">
+              {image ? (
+                // next/image dış domain için next.config.js'te images.remotePatterns gerekebilir.
+                // Takılmasın diye unoptimized kullanıyorum:
+                <Image
+                  src={image}
+                  alt={title}
+                  fill
+                  className="object-cover"
+                  unoptimized
+                />
+              ) : (
+                <div className="flex h-full w-full items-center justify-center text-xs text-muted-foreground">
+                  Görsel yok
+                </div>
+              )}
+            </div>
 
-        {imageUrl ? (
-          // next/image yerine img: remote domain ayarı istemez
-          // eslint-disable-next-line @next/next/no-img-element
-          <img
-            src={imageUrl}
-            alt={title}
-            className="mt-4 w-full max-h-[320px] object-contain rounded-xl border bg-white"
-            loading="lazy"
-          />
-        ) : null}
+            <div>
+              <div className="text-lg font-semibold">{title}</div>
 
-        <div className="mt-5 grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div className="border rounded-xl p-4">
-            <div className="text-xs text-zinc-500 mb-2">Fiyat</div>
-            <div className="text-xl font-semibold">{priceText ?? "—"}</div>
+              <div className="mt-2 text-sm">
+                <span className="text-muted-foreground">Fiyat: </span>
+                <span className="font-semibold">
+                  {price !== null ? `${price.toFixed(2)} ${currency}` : "—"}
+                </span>
+              </div>
+
+              <div className="mt-2 text-xs text-muted-foreground break-all">
+                Kaynak: {data?.source ?? "—"} <br />
+                URL: {p?.url ?? url}
+              </div>
+
+              <div className="mt-3">
+                <a
+                  href={p?.url ?? url}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-sm underline"
+                >
+                  Ürüne git →
+                </a>
+              </div>
+            </div>
           </div>
 
-          <div className="border rounded-xl p-4">
-            <div className="text-xs text-zinc-500 mb-2">Puan</div>
-            <div className="text-xl font-semibold">—</div>
-          </div>
+          <details className="mt-4">
+            <summary className="cursor-pointer text-sm">Debug</summary>
+            <pre className="mt-2 text-xs overflow-auto rounded-lg bg-muted p-3">
+              {JSON.stringify(data, null, 2)}
+            </pre>
+          </details>
         </div>
-
-        <div className="mt-5">
-          <a
-            href={productUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="block w-full text-center rounded-xl py-3 font-semibold bg-green-600 text-white hover:bg-green-700 transition"
-          >
-            Ürüne Git →
-          </a>
-        </div>
-
-        <div className="mt-3 text-xs text-zinc-400 break-all">{productUrl}</div>
-      </div>
+      )}
     </main>
-  );
-}
-
-export default function DemoPage() {
-  return (
-    <Suspense fallback={<div className="p-6">Yükleniyor…</div>}>
-      <DemoInner />
-    </Suspense>
   );
 }

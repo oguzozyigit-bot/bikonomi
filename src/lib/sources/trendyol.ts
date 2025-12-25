@@ -23,27 +23,14 @@ function pickMeta($: cheerio.CheerioAPI, selectors: string[]): string | null {
 function parsePriceLike(input: string | null): number | null {
   if (!input) return null;
 
-  // "1.299,90 TL" | "1299.90" | "1299,90" | "1.299,90"
-  let s = input
-    .replace(/\s/g, "")
-    .replace(/TL|TRY|₺/gi, "")
-    .trim();
+  let s = input.replace(/\s/g, "").replace(/TL|TRY|₺/gi, "").trim();
 
-  // Eğer hem nokta hem virgül varsa: binlik/ondalık ayrımı
-  // "1.299,90" -> "1299.90"
-  if (s.includes(".") && s.includes(",")) {
-    s = s.replace(/\./g, "").replace(",", ".");
-  } else if (s.includes(",")) {
-    // "1299,90" -> "1299.90"
-    s = s.replace(",", ".");
-  }
+  if (s.includes(".") && s.includes(",")) s = s.replace(/\./g, "").replace(",", ".");
+  else if (s.includes(",")) s = s.replace(",", ".");
 
-  // kalan her şeyi temizle
   s = s.replace(/[^\d.]/g, "");
-
   const n = Number(s);
-  if (!Number.isFinite(n)) return null;
-  if (n <= 0) return null;
+  if (!Number.isFinite(n) || n <= 0) return null;
   return n;
 }
 
@@ -56,42 +43,98 @@ function parseJsonLd($: cheerio.CheerioAPI): any[] {
       const parsed = JSON.parse(txt);
       if (Array.isArray(parsed)) out.push(...parsed);
       else out.push(parsed);
-    } catch {
-      // bazı sayfalar JSON-LD içinde ufak kaçaklar yapabiliyor, sessiz geç
-    }
+    } catch {}
   });
   return out;
 }
 
+function normalizeOffersPrice(offers: any): number | null {
+  if (!offers) return null;
+  const candidates: any[] = [];
+  if (Array.isArray(offers)) candidates.push(...offers);
+  else candidates.push(offers);
+
+  for (const o of candidates) {
+    const pRaw = o?.price ?? o?.lowPrice ?? o?.highPrice ?? o?.offers?.price;
+    const p = parsePriceLike(
+      typeof pRaw === "string" || typeof pRaw === "number" ? String(pRaw) : null
+    );
+    if (p) return p;
+  }
+  return null;
+}
+
 function extractFromLd(ld: any[]): { title?: string; image?: string; price?: number } {
-  // Trendyol'da bazen Product/Offer yapıları var.
   for (const node of ld) {
-    const n = node?.["@graph"] ? node["@graph"] : [node];
-    for (const item of n) {
+    const graph = node?.["@graph"] ? node["@graph"] : [node];
+    for (const item of graph) {
       const type = item?.["@type"];
-      if (type === "Product" || (Array.isArray(type) && type.includes("Product"))) {
-        const title = item?.name;
-        let image: string | undefined;
-        if (typeof item?.image === "string") image = item.image;
-        else if (Array.isArray(item?.image) && item.image[0]) image = item.image[0];
+      const isProduct = type === "Product" || (Array.isArray(type) && type.includes("Product"));
+      if (!isProduct) continue;
 
-        // Offers
-        const offers = item?.offers;
-        let price: number | undefined;
-        const pRaw =
-          offers?.price ??
-          offers?.lowPrice ??
-          offers?.highPrice ??
-          offers?.offers?.price; // bazen nested
+      const title = item?.name;
 
-        const parsed = parsePriceLike(typeof pRaw === "string" || typeof pRaw === "number" ? String(pRaw) : null);
-        if (parsed) price = parsed;
+      let image: string | undefined;
+      if (typeof item?.image === "string") image = item.image;
+      else if (Array.isArray(item?.image) && item.image[0]) image = item.image[0];
 
-        return { title, image, price };
-      }
+      const p = normalizeOffersPrice(item?.offers);
+      return { title, image, price: p ?? undefined };
     }
   }
   return {};
+}
+
+function tryParseNextDataPrice($: cheerio.CheerioAPI): number | null {
+  // Next.js state çoğu zaman burada durur
+  const txt = $("#__NEXT_DATA__").text()?.trim();
+  if (!txt) return null;
+
+  try {
+    const j = JSON.parse(txt);
+
+    // Çok farklı shape’ler olabiliyor. Bu yüzden “genel arama” yapıyoruz:
+    // object içinde dolaşıp “price / sellingPrice / discountedPrice / salePrice” yakala.
+    const keys = new Set(["price", "sellingPrice", "discountedPrice", "salePrice", "sale_price"]);
+    const stack: any[] = [j];
+
+    while (stack.length) {
+      const cur = stack.pop();
+      if (!cur || typeof cur !== "object") continue;
+
+      for (const [k, v] of Object.entries(cur)) {
+        if (keys.has(k)) {
+          const p = parsePriceLike(typeof v === "string" || typeof v === "number" ? String(v) : null);
+          if (p) return p;
+        }
+        if (v && typeof v === "object") stack.push(v);
+      }
+    }
+  } catch {
+    return null;
+  }
+
+  return null;
+}
+
+function tryRegexPriceFromHtml(html: string): number | null {
+  // Son çare: HTML içinde price benzeri alanları regex ile yakala
+  const patterns = [
+    /"salePrice"\s*:\s*("?[\d.,]+"?)/i,
+    /"sellingPrice"\s*:\s*("?[\d.,]+"?)/i,
+    /"discountedPrice"\s*:\s*("?[\d.,]+"?)/i,
+    /"price"\s*:\s*("?[\d.,]+"?)/i,
+  ];
+
+  for (const re of patterns) {
+    const m = html.match(re);
+    if (m && m[1]) {
+      const raw = String(m[1]).replace(/"/g, "");
+      const p = parsePriceLike(raw);
+      if (p) return p;
+    }
+  }
+  return null;
 }
 
 export async function fetchTrendyol(url: string): Promise<FetchResult> {
@@ -103,7 +146,6 @@ export async function fetchTrendyol(url: string): Promise<FetchResult> {
       "accept-language": "tr-TR,tr;q=0.9,en;q=0.8",
       accept: "text/html,application/xhtml+xml",
     },
-    // Next fetch cache kapat
     cache: "no-store",
   });
 
@@ -122,7 +164,6 @@ export async function fetchTrendyol(url: string): Promise<FetchResult> {
     'meta[name="twitter:image:src"]',
   ]);
 
-  // Meta price (varsa)
   const metaPriceRaw = pickMeta($, [
     'meta[property="product:price:amount"]',
     'meta[property="og:price:amount"]',
@@ -131,11 +172,26 @@ export async function fetchTrendyol(url: string): Promise<FetchResult> {
   ]);
   const metaPrice = parsePriceLike(metaPriceRaw);
 
-  // JSON-LD dene
   const ld = parseJsonLd($);
   const fromLd = extractFromLd(ld);
 
-  const price = fromLd.price ?? metaPrice ?? null;
+  // DOM fallback (bazı sayfalarda yok çıkabiliyor)
+  const domPriceText =
+    $('[data-testid="price-current-price"]').first().text().trim() ||
+    $("span.prc-dsc").first().text().trim() ||
+    $("span.prc-slg").first().text().trim() ||
+    $("span.prc-org").first().text().trim() ||
+    "";
+
+  const domPrice = parsePriceLike(domPriceText);
+
+  // ✅ Next.js state fallback
+  const nextPrice = tryParseNextDataPrice($);
+
+  // ✅ Regex fallback
+  const rxPrice = tryRegexPriceFromHtml(html);
+
+  const price = fromLd.price ?? metaPrice ?? domPrice ?? nextPrice ?? rxPrice ?? null;
   const image = fromLd.image ?? metaImage ?? null;
 
   return {
@@ -152,6 +208,9 @@ export async function fetchTrendyol(url: string): Promise<FetchResult> {
       hasLd: ld.length > 0,
       metaPriceRaw: metaPriceRaw ?? null,
       metaImage: metaImage ?? null,
+      domPriceText: domPriceText || null,
+      nextPrice: nextPrice ?? null,
+      rxPrice: rxPrice ?? null,
     },
   };
 }
