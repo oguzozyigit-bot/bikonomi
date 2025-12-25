@@ -1,3 +1,7 @@
+"use client";
+
+import { useEffect, useState } from "react";
+
 type FetchResp = {
   source?: string;
   product?: {
@@ -8,49 +12,62 @@ type FetchResp = {
     image?: string | null;
   };
   error?: string;
+  message?: string;
 };
 
-export default async function DemoPage({
+export default function DemoPage({
   searchParams,
 }: {
   searchParams: { url?: string };
 }) {
-  const url = searchParams?.url?.trim();
-  if (!url) return <div>URL yok</div>;
+  const url = searchParams?.url;
+  const [data, setData] = useState<FetchResp | null>(null);
+  const [loading, setLoading] = useState(true);
 
-  let data: FetchResp | null = null;
+  useEffect(() => {
+    if (!url) {
+      setLoading(false);
+      return;
+    }
 
-  try {
-    // 🔒 MUTLAK YOL: internal fetch
-    const res = await fetch(
-      `${process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : ""}/api/fetch?url=${encodeURIComponent(url)}`,
-      { cache: "no-store" }
-    );
-    data = await res.json();
-  } catch (e: any) {
-    data = { error: e?.message ?? "fetch failed" };
-  }
+    fetch(`/api/fetch?url=${encodeURIComponent(url)}`)
+      .then((r) => r.json())
+      .then((j) => setData(j))
+      .catch((e) => setData({ error: e?.message ?? "fetch failed" }))
+      .finally(() => setLoading(false));
+  }, [url]);
+
+  if (!url) return <div style={{ padding: 24 }}>URL yok</div>;
+  if (loading) return <div style={{ padding: 24 }}>Yükleniyor…</div>;
 
   const p = data?.product;
 
   return (
-    <main style={{ padding: 24 }}>
+    <main style={{ padding: 24, maxWidth: 900 }}>
       <h1>Bikonomi Demo</h1>
 
       {!p ? (
         <pre>{JSON.stringify(data, null, 2)}</pre>
       ) : (
-        <div>
+        <div style={{ border: "1px solid #ddd", padding: 16 }}>
           <h2>{p.title}</h2>
+
           <p>
             Fiyat:{" "}
             {typeof p.price === "number"
-              ? `${p.price.toFixed(2)} ${p.currency}`
+              ? `${p.price.toFixed(2)} ${p.currency ?? "TRY"}`
               : "—"}
           </p>
-          {p.image && <img src={p.image} style={{ maxWidth: 200 }} />}
-          <br />
-          <a href={p.url} target="_blank">Ürüne git</a>
+
+          {p.image && (
+            <img src={p.image} style={{ maxWidth: 220 }} />
+          )}
+
+          <p style={{ fontSize: 12 }}>Kaynak: {data?.source}</p>
+
+          <a href={p.url} target="_blank" rel="noreferrer">
+            Ürüne git →
+          </a>
         </div>
       )}
     </main>
