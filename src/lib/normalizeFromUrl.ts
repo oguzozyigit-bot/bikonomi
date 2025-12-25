@@ -1,4 +1,4 @@
-import { fetchByUrl } from "@/lib/sources";
+import { fetchBySource } from "@/lib/sources";
 
 /**
  * Eski normalize* fonksiyonlarını kaldırdık.
@@ -17,6 +17,6 @@ export async function normalizeFromUrl(rawUrl: string) {
   } catch {
     throw new Error("Geçersiz URL");
   }
+return fetchBySource(source, rawUrl);
 
-  return fetchByUrl(u.toString());
 }
