@@ -1,22 +1,27 @@
 import { fetchBySource } from "@/lib/sources";
 
 /**
- * Eski normalize* fonksiyonlarını kaldırdık.
- * Artık tek giriş noktası: fetchByUrl(url)
- * - kaynağı tespit eder
- * - uygun parser'ı çağırır (hepsiburada/trendyol/amazon)
+ * URL'yi normalize eder ve kaynak (trendyol/hepsiburada) tespit edip fetch eder.
+ * Not: Hepsiburada server-side 403 dönebilir; bu yine de tip hatası yaratmaz.
  */
 export async function normalizeFromUrl(rawUrl: string) {
-  const url = rawUrl.trim();
-  if (!url) throw new Error("URL boş");
+  const urlStr = (rawUrl ?? "").trim();
+  if (!urlStr) throw new Error("URL boş");
 
-  // URL doğrulama
   let u: URL;
   try {
-    u = new URL(url);
+    u = new URL(urlStr);
   } catch {
     throw new Error("Geçersiz URL");
   }
-return fetchBySource(source, rawUrl);
 
+  const host = u.hostname.replace(/^www\./, "").toLowerCase();
+
+  let source: "trendyol" | "hepsiburada";
+  if (host.includes("trendyol.com")) source = "trendyol";
+  else if (host.includes("hepsiburada.com")) source = "hepsiburada";
+  else throw new Error("Desteklenmeyen kaynak");
+
+  // ✅ Artık source tanımlı, TS hatası biter
+  return fetchBySource(source, u.toString());
 }
