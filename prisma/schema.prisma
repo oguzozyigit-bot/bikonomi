@@ -4,6 +4,10 @@ generator client {
 
 datasource db {
   provider = "postgresql"
+  url      = env("DATABASE_URL")
+  // opsiyonel:
+  // directUrl = env("DIRECT_DATABASE_URL")
+}
 }
 
 model ProductAlert {
