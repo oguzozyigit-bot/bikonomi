@@ -1,7 +1,7 @@
 "use client";
 
+import { Suspense, useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
-import { useEffect, useState } from "react";
 
 type FetchResult = {
   source?: string;
@@ -14,7 +14,7 @@ type FetchResult = {
   };
 };
 
-export default function DemoPage() {
+function DemoInner() {
   const searchParams = useSearchParams();
   const url = searchParams.get("url");
 
@@ -39,16 +39,10 @@ export default function DemoPage() {
   if (loading) return <div className="p-6">Yükleniyor…</div>;
   if (error) return <div className="p-6 text-red-500">{error}</div>;
 
-  const title =
-    data?.product?.title ||
-    data?.title ||
-    "Başlık bulunamadı";
-
-  const price =
-    data?.product?.price
-      ? `${data.product.price} ${data.product.currency || "TRY"}`
-      : "—";
-
+  const title = data?.product?.title || data?.title || "Başlık bulunamadı";
+  const price = data?.product?.price
+    ? `${data.product.price} ${data.product.currency || "TRY"}`
+    : "—";
   const productUrl = data?.product?.url || url || "#";
 
   return (
@@ -58,9 +52,7 @@ export default function DemoPage() {
           {(data?.source || "KAYNAK").toUpperCase()}
         </div>
 
-        <h1 className="mt-2 text-2xl font-bold">
-          {title}
-        </h1>
+        <h1 className="mt-2 text-2xl font-bold">{title}</h1>
 
         <div className="mt-5 grid grid-cols-1 md:grid-cols-2 gap-4">
           <div className="border rounded-xl p-4">
@@ -86,5 +78,13 @@ export default function DemoPage() {
         </div>
       </div>
     </main>
+  );
+}
+
+export default function DemoPage() {
+  return (
+    <Suspense fallback={<div className="p-6">Yükleniyor…</div>}>
+      <DemoInner />
+    </Suspense>
   );
 }
