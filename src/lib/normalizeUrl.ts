@@ -1,30 +1,27 @@
-/**
- * URL string -> URL objesi (temizlenmiş)
- * Not: Bu dosya sadece URL parse + normalize yapar, fetch yapmaz.
- */
+export type Source = "trendyol" | "hepsiburada" | "amazon" | "unknown";
 
-export function normalizeUrl(raw: string): URL {
-  const s = (raw ?? "").trim();
-  if (!s) throw new Error("URL boş");
+export function normalizeUrl(raw: string): { source: Source; clean: string } {
+  let u = (raw || "").trim();
+  if (!u) return { source: "unknown", clean: "" };
 
-  // Bazı kullanıcılar "www..." veya "trendyol.com/..." diye yapıştırabilir.
-  // Protokol yoksa https ekleyelim.
-  const withProto = /^https?:\/\//i.test(s) ? s : `https://${s}`;
+  if (!/^https?:\/\//i.test(u)) {
+    u = "https://" + u;
+  }
 
-  let u: URL;
   try {
-    u = new URL(withProto);
+    const url = new URL(u);
+    const host = url.hostname.replace(/^www\./, "");
+
+    let source: Source = "unknown";
+    if (host.includes("trendyol")) source = "trendyol";
+    else if (host.includes("hepsiburada")) source = "hepsiburada";
+    else if (host.includes("amazon")) source = "amazon";
+
+    // 🔓 MVP için gevşek bırakıyoruz
+    return { source, clean: url.toString() };
   } catch {
-    throw new Error("Geçersiz URL");
+    // ❗ MVP KURALI:
+    // Parse edemezsek bile linki olduğu gibi kabul et
+    return { source: "unknown", clean: u };
   }
-
-  // www kaldır
-  u.hostname = u.hostname.replace(/^www\./i, "").toLowerCase();
-
-  // sadece http/https
-  if (u.protocol !== "https:" && u.protocol !== "http:") {
-    throw new Error("Geçersiz protokol");
-  }
-
-  return u;
 }

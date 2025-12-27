@@ -1,5 +1,13 @@
-// MVP-0 STUB (Prisma devre dışı)
-// Vercel build hatalarını önlemek için geçici olarak kapatıldı.
-// MVP sonrası gerçek Prisma bağlantısı geri eklenecek.
+// src/lib/prisma.ts
+import { PrismaClient } from "@prisma/client";
 
-export const prisma = null as any;
+const globalForPrisma = globalThis as unknown as { prisma?: PrismaClient };
+
+export const prisma =
+  globalForPrisma.prisma ??
+  new PrismaClient({
+    log: process.env.NODE_ENV === "development" ? ["error", "warn"] : ["error"],
+  });
+
+if (process.env.NODE_ENV !== "production") globalForPrisma.prisma = prisma;
+

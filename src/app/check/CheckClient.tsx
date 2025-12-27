@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
+import { slugToTitle } from "@/lib/slugToTitle";
 
 type FetchResult = {
   ok: boolean;
@@ -14,9 +15,22 @@ type FetchResult = {
   error?: string;
 };
 
+function deriveTitleFromUrl(u: string) {
+  try {
+    const parsed = new URL(u);
+    const last = parsed.pathname.split("/").filter(Boolean).pop() || "";
+    return slugToTitle(last, { maxWords: 12 });
+  } catch {
+    return "";
+  }
+}
+
 export default function CheckClient() {
   const sp = useSearchParams();
-  const url = sp.get("url") ?? "";
+  const url = (sp.get("url") ?? "").trim();
+
+  // URL'den anında okunur başlık (API gelmeden önce ekranda kullanacağız)
+  const fallbackTitle = useMemo(() => deriveTitleFromUrl(url), [url]);
 
   const [data, setData] = useState<FetchResult>({ ok: false, error: "Link gelmedi" });
   const [loading, setLoading] = useState(false);
@@ -67,6 +81,9 @@ export default function CheckClient() {
     return "ALINMAZ";
   }, [data.ok, rating]);
 
+  // Ekranda başlık: API title varsa onu bas, yoksa slug'dan üretilen fallback
+  const uiTitle = data.title || fallbackTitle || "—";
+
   return (
     <main style={{ minHeight: "100vh", display: "grid", placeItems: "center", background: "#fff" }}>
       <div style={{ width: 420, maxWidth: "90vw", border: "1px solid #ddd", borderRadius: 12, padding: 20 }}>
@@ -78,7 +95,7 @@ export default function CheckClient() {
           <p style={{ color: "crimson" }}>{data.error ?? "API çağrısı başarısız"}</p>
         )}
 
-        <p><b>Başlık:</b> {data.title ?? "—"}</p>
+        <p><b>Başlık:</b> {uiTitle}</p>
         <p><b>Fiyat:</b> {data.price ?? "—"} {data.currency ?? ""}</p>
         <p><b>Puan:</b> {data.rating ?? "—"} / 5</p>
         <p><b>Yorum:</b> {data.ratingCount ?? "—"}</p>
@@ -97,6 +114,8 @@ export default function CheckClient() {
             textAlign: "center",
             borderRadius: 10,
             textDecoration: "none",
+            pointerEvents: url ? "auto" : "none",
+            opacity: url ? 1 : 0.6,
           }}
         >
           Ürüne Git
@@ -104,4 +123,43 @@ export default function CheckClient() {
       </div>
     </main>
   );
+}
+function explainScore({
+  score,
+  priceUsed,
+  rating,
+  ratingCount,
+}: {
+  score: number;
+  priceUsed: "auto" | "manual";
+  rating: number | null;
+  ratingCount: number | null;
+}) {
+  const lines: string[] = [];
+
+  if (priceUsed === "manual") {
+    lines.push("Fiyat bilgisi manuel girildiği için karşılaştırma sınırlı.");
+  } else {
+    lines.push("Fiyat piyasa verileriyle otomatik karşılaştırıldı.");
+  }
+
+  if (rating != null) {
+    if ((ratingCount ?? 0) < 5) {
+      lines.push("Yorum sayısı az olduğu için güven puanı bir miktar kırıldı.");
+    } else if (rating >= 4.5) {
+      lines.push("Kullanıcı memnuniyeti oldukça yüksek.");
+    } else if (rating >= 4.0) {
+      lines.push("Kullanıcı memnuniyeti iyi seviyede.");
+    }
+  }
+
+  if (score >= 85) {
+    lines.push("Genel değerlendirme: fiyat/performans açısından güçlü.");
+  } else if (score >= 70) {
+    lines.push("Genel değerlendirme: temkinli şekilde tercih edilebilir.");
+  } else {
+    lines.push("Genel değerlendirme: alternatifleri karşılaştırmak faydalı.");
+  }
+
+  return lines.slice(0, 2); // sadece 2 satır
 }
