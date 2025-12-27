@@ -100,11 +100,11 @@ function simpleSparklinePath(points: Point[], w = 720, h = 180, pad = 18) {
   return d;
 }
 
-function last<T>(arr: T[]) {
-  return arr[arr.length - 1];
-}
 function first<T>(arr: T[]) {
   return arr[0];
+}
+function last<T>(arr: T[]) {
+  return arr[arr.length - 1];
 }
 
 function detectSource(u: string) {
@@ -193,6 +193,7 @@ function writeHistory(key: string, points: Point[]) {
   }
 }
 
+// default: daily upsert
 function upsertToday(points: Point[], price: number): Point[] {
   const d = todayKey();
   const next = points.slice();
@@ -201,6 +202,15 @@ function upsertToday(points: Point[], price: number): Point[] {
     return next;
   }
   return [...next, { d, p: price }];
+}
+
+// debug: minute granularity point
+function appendDebugPoint(points: Point[], price: number): Point[] {
+  const d = new Date();
+  const key =
+    `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")} ` +
+    `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+  return [...points, { d: key, p: price }].slice(-180);
 }
 
 function pctChange(points: Point[]) {
@@ -252,19 +262,7 @@ function makeMockProduct(inputUrl: string) {
     },
   ];
 
-  const cheapest = offers
-    .filter((o) => o.inStock)
-    .slice()
-    .sort((a, b) => a.price + a.shipping - (b.price + b.shipping))[0];
-
-  const marketAvg =
-    offers.filter((o) => o.inStock).reduce((s, o) => s + o.price + o.shipping, 0) /
-    Math.max(1, offers.filter((o) => o.inStock).length);
-
-  const deltaPct = ((cheapest.price + cheapest.shipping - marketAvg) / marketAvg) * 100;
-
   let score = 65;
-  score += clamp((-deltaPct) * 1.8, -18, 18);
   score = clamp(Math.round(score), 0, 100);
 
   return {
@@ -281,6 +279,8 @@ function makeMockProduct(inputUrl: string) {
 
 export default function CheckClient() {
   const sp = useSearchParams();
+  const debug = sp.get("debug") === "1"; // ✅ debug=1 ile butonlar görünür
+
   const uRaw = sp.get("u") || "";
   const u = useMemo(() => uRaw.trim(), [uRaw]);
 
@@ -369,7 +369,7 @@ export default function CheckClient() {
     });
   }, [base.offers, tyPrice, hbPrice]);
 
-  // when live comes, save to history (once per day)
+  // when live comes, save daily history (once per day)
   useEffect(() => {
     const live =
       source === "trendyol" ? tyPrice :
@@ -419,6 +419,13 @@ export default function CheckClient() {
     return "Mock Modu";
   }, [source, tyLoading, hbLoading]);
 
+  // helper to get current live
+  function currentLive(): number | null {
+    if (source === "trendyol") return typeof tyPrice === "number" ? tyPrice : null;
+    if (source === "hepsiburada") return typeof hbPrice === "number" ? hbPrice : null;
+    return null;
+  }
+
   return (
     <main className="min-h-screen bg-[#0b1020] text-slate-100">
       <div className="sticky top-0 z-40 border-b border-white/10 bg-[#0b1020]/80 backdrop-blur">
@@ -445,6 +452,7 @@ export default function CheckClient() {
       </div>
 
       <div className="mx-auto w-full max-w-5xl px-4 py-5 sm:py-8">
+        {/* URL input */}
         <div className="mb-5 rounded-2xl bg-white/5 p-3 ring-1 ring-white/10 sm:mb-7 sm:p-4">
           <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
             <div className="text-sm text-slate-200 sm:min-w-32">Ürün linki</div>
@@ -456,13 +464,51 @@ export default function CheckClient() {
                 className="w-full rounded-xl bg-[#0b1020]/60 px-4 py-3 text-sm text-slate-100 ring-1 ring-white/10 outline-none placeholder:text-slate-400 focus:ring-2 focus:ring-white/20"
               />
               <div className="mt-2 text-xs text-slate-400">
-                Grafik localStorage ile birikir: her gün 1 nokta. (DB yok, risk yok)
+                Grafik localStorage ile birikir: normalde her gün 1 nokta. (DB yok, risk yok)
               </div>
+
+              {/* ✅ DEBUG BUTONLARI URL KUTUSUNUN ALTINDA */}
+              {debug && (
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <button
+                    className="rounded-xl bg-white px-3 py-2 text-xs font-semibold text-black ring-1 ring-white/20"
+                    onClick={() => {
+                      const live = currentLive();
+                      if (typeof live !== "number") return;
+
+                      setHistoryPoints((prev) => {
+                        const next = appendDebugPoint(prev, live);
+                        writeHistory(storageKey, next);
+                        return next;
+                      });
+                    }}
+                    title="Dakika bazlı test noktası ekler"
+                  >
+                    + Nokta ekle (Test)
+                  </button>
+
+                  <button
+                    className="rounded-xl bg-white/10 px-3 py-2 text-xs font-semibold text-slate-200 ring-1 ring-white/10"
+                    onClick={() => {
+                      writeHistory(storageKey, []);
+                      setHistoryPoints([]);
+                    }}
+                    title="Bu ürüne ait local geçmişi siler"
+                  >
+                    Geçmişi sıfırla (Test)
+                  </button>
+
+                  <span className="inline-flex items-center rounded-xl bg-white/5 px-3 py-2 text-xs text-slate-200 ring-1 ring-white/10">
+                    Key: <span className="ml-2 text-slate-400">{storageKey}</span>
+                  </span>
+                </div>
+              )}
             </div>
           </div>
         </div>
 
         <div className="grid grid-cols-1 gap-5 lg:grid-cols-[1.2fr_.8fr] lg:gap-6">
+          {/* Left */}
           <section className="space-y-5">
             <div className="rounded-3xl bg-white/5 p-4 ring-1 ring-white/10 sm:p-5">
               <div className="flex flex-col gap-4 sm:flex-row sm:items-start">
@@ -535,6 +581,7 @@ export default function CheckClient() {
               </div>
             </div>
 
+            {/* Chart */}
             <div className="rounded-3xl bg-white/5 p-4 ring-1 ring-white/10 sm:p-5">
               <div className="flex flex-wrap items-end justify-between gap-3">
                 <div>
@@ -577,6 +624,7 @@ export default function CheckClient() {
             </div>
           </section>
 
+          {/* Right */}
           <aside className="space-y-5">
             <div className="rounded-3xl bg-gradient-to-br from-white/10 to-white/5 p-5 ring-1 ring-white/10">
               <div className="text-xs text-slate-300">Sponsor Alanı</div>
