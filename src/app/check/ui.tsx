@@ -468,8 +468,8 @@ export default function CheckClient() {
               </div>
 
               {/* ✅ DEBUG BUTONLARI URL KUTUSUNUN ALTINDA */}
-              {debug && (
-                <div className="mt-3 flex flex-wrap gap-2">
+             {debug && (
+  <div className="relative z-50 mt-3 flex flex-wrap gap-2">
                   <button
                     className="rounded-xl bg-white px-3 py-2 text-xs font-semibold text-black ring-1 ring-white/20"
                     onClick={() => {
@@ -498,9 +498,16 @@ export default function CheckClient() {
                     Geçmişi sıfırla (Test)
                   </button>
 
-                  <span className="inline-flex items-center rounded-xl bg-white/5 px-3 py-2 text-xs text-slate-200 ring-1 ring-white/10">
-                    Key: <span className="ml-2 text-slate-400">{storageKey}</span>
-                  </span>
+                 <div className="flex items-center gap-2 rounded-xl bg-white/5 px-3 py-2 text-xs text-slate-200 ring-1 ring-white/10">
+  <span className="text-slate-300">Key:</span>
+  <input
+    value={storageKey}
+    readOnly
+    className="w-[360px] max-w-full bg-transparent text-slate-400 outline-none"
+    onFocus={(e) => e.currentTarget.select()}
+  />
+</div>
+
                 </div>
               )}
             </div>
