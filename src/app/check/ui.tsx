@@ -143,12 +143,14 @@ function extractHBCode(u: string) {
 }
 
 // ---------------- localStorage history (MVP SAFE) ----------------
-function todayKey() {
+// ✅ Saatlik anahtar: YYYY-MM-DD HH  (debug yok, otomatik hızlandırma)
+function slotKeyHourly() {
   const d = new Date();
   const y = d.getFullYear();
   const m = String(d.getMonth() + 1).padStart(2, "0");
   const day = String(d.getDate()).padStart(2, "0");
-  return `${y}-${m}-${day}`;
+  const h = String(d.getHours()).padStart(2, "0");
+  return `${y}-${m}-${day} ${h}`;
 }
 
 function makeHistoryStorageKey(inputUrl: string) {
@@ -193,24 +195,14 @@ function writeHistory(key: string, points: Point[]) {
   }
 }
 
-// default: daily upsert
-function upsertToday(points: Point[], price: number): Point[] {
-  const d = todayKey();
+function upsertHourly(points: Point[], price: number): Point[] {
+  const d = slotKeyHourly();
   const next = points.slice();
   if (next.length && next[next.length - 1].d === d) {
     next[next.length - 1] = { d, p: price };
     return next;
   }
   return [...next, { d, p: price }];
-}
-
-// debug: minute granularity point
-function appendDebugPoint(points: Point[], price: number): Point[] {
-  const d = new Date();
-  const key =
-    `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")} ` +
-    `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
-  return [...points, { d: key, p: price }].slice(-180);
 }
 
 function pctChange(points: Point[]) {
@@ -279,7 +271,6 @@ function makeMockProduct(inputUrl: string) {
 
 export default function CheckClient() {
   const sp = useSearchParams();
-  const debug = sp.get("debug") === "1"; // ✅ debug=1 ile butonlar görünür
 
   const uRaw = sp.get("u") || "";
   const u = useMemo(() => uRaw.trim(), [uRaw]);
@@ -369,7 +360,7 @@ export default function CheckClient() {
     });
   }, [base.offers, tyPrice, hbPrice]);
 
-  // when live comes, save daily history (once per day)
+  // when live comes, save HOURLY history (once per hour)
   useEffect(() => {
     const live =
       source === "trendyol" ? tyPrice :
@@ -380,7 +371,7 @@ export default function CheckClient() {
     if (!storageKey || storageKey === "bikonomi:hist:unknown") return;
 
     setHistoryPoints((prev) => {
-      const next = upsertToday(prev, live);
+      const next = upsertHourly(prev, live);
       writeHistory(storageKey, next);
       return next;
     });
@@ -409,7 +400,11 @@ export default function CheckClient() {
     return sum / Math.max(1, inStocks.length);
   }, [offers]);
 
-  const deltaPct = useMemo(() => ((cheapest.price + cheapest.shipping - marketAvg) / marketAvg) * 100, [cheapest, marketAvg]);
+  const deltaPct = useMemo(
+    () => ((cheapest.price + cheapest.shipping - marketAvg) / marketAvg) * 100,
+    [cheapest, marketAvg]
+  );
+
   const label = trendLabel(deltaPct);
   const tone = scoreTone(base.score);
 
@@ -419,15 +414,16 @@ export default function CheckClient() {
     return "Mock Modu";
   }, [source, tyLoading, hbLoading]);
 
-  // helper to get current live
-  function currentLive(): number | null {
-    if (source === "trendyol") return typeof tyPrice === "number" ? tyPrice : null;
-    if (source === "hepsiburada") return typeof hbPrice === "number" ? hbPrice : null;
-    return null;
-  }
+  // User-friendly chart subtitle (no “mock” word on UI headline)
+  const chartHint = useMemo(() => {
+    if (historyPoints.length === 0) return "Fiyat geçmişin oluşmaya başlayacak (ilk kayıt bekleniyor).";
+    if (historyPoints.length === 1) return "Fiyat geçmişin oluşuyor (birkaç saat içinde ikinci nokta gelir).";
+    return "Fiyat geçmişi";
+  }, [historyPoints.length]);
 
   return (
     <main className="min-h-screen bg-[#0b1020] text-slate-100">
+      {/* Top bar */}
       <div className="sticky top-0 z-40 border-b border-white/10 bg-[#0b1020]/80 backdrop-blur">
         <div className="mx-auto flex w-full max-w-5xl items-center justify-between px-4 py-3">
           <div className="flex items-center gap-3">
@@ -464,95 +460,8 @@ export default function CheckClient() {
                 className="w-full rounded-xl bg-[#0b1020]/60 px-4 py-3 text-sm text-slate-100 ring-1 ring-white/10 outline-none placeholder:text-slate-400 focus:ring-2 focus:ring-white/20"
               />
               <div className="mt-2 text-xs text-slate-400">
-                Grafik localStorage ile birikir: normalde her gün 1 nokta. (DB yok, risk yok)
+                Fiyat geçmişi otomatik birikir: <span className="text-slate-200">saatte 1 nokta</span>. (DB yok, risk yok)
               </div>
-
-              {/* ✅ DEBUG BUTONLARI URL KUTUSUNUN ALTINDA */}
-             {debug && (
-{debug && (
-  <div
-    className="fixed bottom-4 right-4 z-[99999] pointer-events-auto"
-    style={{ zIndex: 99999 }}
-  >
-    <div className="rounded-2xl bg-[#0b1020]/95 p-3 ring-1 ring-white/15 backdrop-blur">
-      <div className="mb-2 text-xs text-slate-200">
-        Debug Panel
-        <span className="ml-2 text-slate-400">(tıklanabilir)</span>
-      </div>
-
-      <div className="flex flex-wrap gap-2">
-        <button
-          className="rounded-xl bg-white px-3 py-2 text-xs font-semibold text-black ring-1 ring-white/20"
-          onClick={() => {
-            const live =
-              source === "trendyol" ? (typeof tyPrice === "number" ? tyPrice : null) :
-              source === "hepsiburada" ? (typeof hbPrice === "number" ? hbPrice : null) :
-              null;
-
-            if (typeof live !== "number") return;
-
-            setHistoryPoints((prev) => {
-              const d = new Date();
-              const key =
-                `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")} ` +
-                `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}:${String(d.getSeconds()).padStart(2, "0")}`;
-
-              const next = [...prev, { d: key, p: live }].slice(-180);
-              writeHistory(storageKey, next);
-              return next;
-            });
-          }}
-        >
-          + Nokta ekle
-        </button>
-
-        <button
-          className="rounded-xl bg-white/10 px-3 py-2 text-xs font-semibold text-slate-200 ring-1 ring-white/10"
-          onClick={() => {
-            writeHistory(storageKey, []);
-            setHistoryPoints([]);
-          }}
-        >
-          Sıfırla
-        </button>
-      </div>
-
-      <div className="mt-2 max-w-[360px] text-[10px] text-slate-400 break-all">
-        {storageKey}
-      </div>
-    </div>
-  </div>
-)}
-;
-                    }}
-                    title="Dakika bazlı test noktası ekler"
-                  >
-                    + Nokta ekle (Test)
-                  </button>
-
-                  <button
-                    className="rounded-xl bg-white/10 px-3 py-2 text-xs font-semibold text-slate-200 ring-1 ring-white/10"
-                    onClick={() => {
-                      writeHistory(storageKey, []);
-                      setHistoryPoints([]);
-                    }}
-                    title="Bu ürüne ait local geçmişi siler"
-                  >
-                    Geçmişi sıfırla (Test)
-                  </button>
-
-                 <div className="flex items-center gap-2 rounded-xl bg-white/5 px-3 py-2 text-xs text-slate-200 ring-1 ring-white/10">
-  <span className="text-slate-300">Key:</span>
-  <input
-    value={storageKey}
-    readOnly
-    className="w-[360px] max-w-full bg-transparent text-slate-400 outline-none"
-    onFocus={(e) => e.currentTarget.select()}
-  />
-</div>
-
-                </div>
-              )}
             </div>
           </div>
         </div>
@@ -637,7 +546,8 @@ export default function CheckClient() {
                 <div>
                   <div className="text-sm font-semibold">Fiyat Geçmişi</div>
                   <div className="mt-1 text-xs text-slate-400">
-                    Mod: {chartMode} · Nokta: <span className="text-slate-200">{chartPoints.length}</span>
+                    {chartHint} · Nokta: <span className="text-slate-200">{chartPoints.length}</span>
+                    <span className="ml-2 text-slate-500">({chartMode})</span>
                   </div>
                 </div>
                 <div className="text-xs text-slate-300">
