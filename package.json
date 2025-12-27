@@ -2,11 +2,12 @@
   "name": "bikonomi-ui",
   "version": "0.1.0",
   "private": true,
-  "scripts": {
-    "dev": "next dev",
-    "build": "next build",
-    "start": "next start"
-  },
+"scripts": {
+  "dev": "next dev",
+  "build": "npx prisma generate && next build",
+  "postinstall": "npx prisma migrate deploy",
+  "start": "next start"
+},
   "dependencies": {
     "@prisma/client": "^6.19.1",
     "cheerio": "^1.1.2",
