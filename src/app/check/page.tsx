@@ -5,27 +5,34 @@ import CheckClient from "./CheckClient";
 const site =
   process.env.NEXT_PUBLIC_SITE_URL?.replace(/\/$/, "") || "https://www.bikonomi.com";
 
-export const metadata: Metadata = {
-  metadataBase: new URL(site),
-  title: "Bikonomi — Akıllı alışveriş kararı",
-  description: "Ürün linkini yapıştır, skorunu gör, ALINIR/DİKKAT/ALINMAZ kararını al.",
-  openGraph: {
+export function generateMetadata({
+  searchParams,
+}: {
+  searchParams: { u?: string; v?: string };
+}): Metadata {
+  const u = (searchParams?.u || "").trim();
+  const v = (searchParams?.v || "").trim();
+
+  // cache kırmak için v'yi OG URL'e ekliyoruz
+  const og = u
+    ? `/api/og?u=${encodeURIComponent(u)}${v ? `&v=${encodeURIComponent(v)}` : ""}`
+    : "/og.png";
+
+  return {
+    metadataBase: new URL(site),
     title: "Bikonomi — Akıllı alışveriş kararı",
-    description: "Ürün linkini yapıştır, skorunu gör.",
-    images: [
-      {
-        // varsayılan (fallback)
-        url: "/api/og?score=72&decision=D%C4%B0KKAT&title=Bikonomi%20Skoru",
-        width: 1200,
-        height: 630,
-      },
-    ],
-  },
-  twitter: {
-    card: "summary_large_image",
-    images: ["/api/og?score=72&decision=D%C4%B0KKAT&title=Bikonomi%20Skoru"],
-  },
-};
+    description: "Ürün linkini yapıştır, skorunu gör, ALINIR/DİKKAT/ALINMAZ kararını al.",
+    openGraph: {
+      title: "Bikonomi — Akıllı alışveriş kararı",
+      description: "Ürün linkini yapıştır, skorunu gör.",
+      images: [{ url: og, width: 1200, height: 630 }],
+    },
+    twitter: {
+      card: "summary_large_image",
+      images: [og],
+    },
+  };
+}
 
 export default function Page() {
   return (
