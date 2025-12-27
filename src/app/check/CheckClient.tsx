@@ -2,164 +2,249 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
-import { slugToTitle } from "@/lib/slugToTitle";
 
-type FetchResult = {
-  ok: boolean;
-  title?: string | null;
-  price?: number | null;
-  currency?: string | null;
-  rating?: number | null;
-  ratingCount?: number | null;
-  source?: string;
-  error?: string;
-};
+function buildShareUrl(uParam: string, pParam: string) {
+  const origin =
+    typeof window !== "undefined" ? window.location.origin : "https://www.bikonomi.com";
 
-function deriveTitleFromUrl(u: string) {
-  try {
-    const parsed = new URL(u);
-    const last = parsed.pathname.split("/").filter(Boolean).pop() || "";
-    return slugToTitle(last, { maxWords: 12 });
-  } catch {
-    return "";
-  }
+  const url = new URL("/check", origin);
+
+  if (uParam) url.searchParams.set("u", uParam);
+  if (pParam) url.searchParams.set("p", pParam);
+
+  // WhatsApp cache kırmak için
+  url.searchParams.set("v", String(Date.now()));
+
+  return url.toString();
+}
+
+function buildWhatsAppLink(shareUrl: string, score: number, decision: string, title: string) {
+  const text =
+    `Bikonomi sonucu:\n` +
+    `${title}\n` +
+    `Skor: ${score} — ${decision}\n` +
+    `${shareUrl}`;
+
+  return `https://wa.me/?text=${encodeURIComponent(text)}`;
 }
 
 export default function CheckClient() {
   const sp = useSearchParams();
-  const url = (sp.get("url") ?? "").trim();
 
-  // URL'den anında okunur başlık (API gelmeden önce ekranda kullanacağız)
-  const fallbackTitle = useMemo(() => deriveTitleFromUrl(url), [url]);
+  const uRaw = sp.get("u") || "";
+  const pRaw = sp.get("p") || "";
 
-  const [data, setData] = useState<FetchResult>({ ok: false, error: "Link gelmedi" });
-  const [loading, setLoading] = useState(false);
+  const u = useMemo(() => uRaw.trim(), [uRaw]);
+  const p = useMemo(() => pRaw.trim(), [pRaw]);
+
+  const [data, setData] = useState<any>(null);
+  const [err, setErr] = useState<string>("");
+  const [loading, setLoading] = useState<boolean>(true);
 
   useEffect(() => {
-    let cancelled = false;
-
-    async function run() {
-      if (!url) {
-        setData({ ok: false, error: "Link gelmedi" });
-        return;
-      }
-
-      setLoading(true);
-      try {
-        const res = await fetch(`/api/fetch?url=${encodeURIComponent(url)}`, {
-          cache: "no-store",
-        });
-
-        const text = await res.text();
-        let json: any;
-        try {
-          json = JSON.parse(text);
-        } catch {
-          json = { ok: false, error: `API JSON dönmedi (HTTP ${res.status})` };
-        }
-
-        if (!cancelled) setData(json);
-      } catch {
-        if (!cancelled) setData({ ok: false, error: "API çağrısı başarısız" });
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
+    if (!u) {
+      setErr("Link bulunamadı. Ana sayfaya dönüp ürün linkini yapıştır.");
+      setLoading(false);
+      return;
     }
 
-    run();
-    return () => {
-      cancelled = true;
-    };
-  }, [url]);
+    const ctrl = new AbortController();
 
-  const rating = data.rating ?? 0;
+    (async () => {
+      try {
+        setErr("");
+        setLoading(true);
 
-  const decision = useMemo(() => {
-    if (!data.ok) return "ALINMAZ";
-    if (rating >= 4.5) return "ALINIR";
-    if (rating >= 4.0) return "DİKKAT";
-    return "ALINMAZ";
-  }, [data.ok, rating]);
+        const res = await fetch(
+          `/api/analyze?u=${encodeURIComponent(u)}&p=${encodeURIComponent(p)}`,
+          { signal: ctrl.signal, cache: "no-store" }
+        );
 
-  // Ekranda başlık: API title varsa onu bas, yoksa slug'dan üretilen fallback
-  const uiTitle = data.title || fallbackTitle || "—";
+        let json: any = null;
+        try {
+          json = await res.json();
+        } catch {
+          throw new Error("Sunucudan geçersiz yanıt alındı (JSON değil).");
+        }
+
+        if (!res.ok) {
+          const msg = json?.detail
+            ? `${json.error}: ${json.detail}`
+            : json?.error || "Analyze failed";
+          throw new Error(msg);
+        }
+
+        setData(json);
+      } catch (e: any) {
+        if (e?.name === "AbortError") return;
+        setErr(e?.message || "Hata");
+      } finally {
+        setLoading(false);
+      }
+    })();
+
+    return () => ctrl.abort();
+  }, [u, p]);
+
+  if (loading) return <div className="p-4 text-white">Analiz ediliyor…</div>;
+  if (err) return <div className="p-4 text-red-300">Hata: {err}</div>;
+  if (!data) return <div className="p-4 text-white">Veri yok.</div>;
+
+  const trendPct = Math.round(((data.trend30dPct ?? 0) * 100) as number);
+
+  // ✅ Karar (hook yok)
+  const s = Number(data?.score ?? 0);
+  const decision = s >= 85 ? "ALINIR" : s >= 70 ? "DİKKAT" : "ALINMAZ";
+
+  const shareUrl = buildShareUrl(u, p);
+
+  const onWhatsAppShare = () => {
+    const title = String(data?.title ?? "Bikonomi");
+    const scoreNum = Number(data?.score ?? 0);
+
+    // Mobilde native paylaşım varsa onu dene
+    if (typeof navigator !== "undefined" && (navigator as any).share) {
+      (navigator as any)
+        .share({
+          title: "Bikonomi",
+          text: `${title}\nSkor: ${scoreNum} — ${decision}`,
+          url: shareUrl,
+        })
+        .catch(() => {});
+      return;
+    }
+
+    // Desktop fallback: WhatsApp Web
+    const wa = buildWhatsAppLink(shareUrl, scoreNum, decision, title);
+    window.open(wa, "_blank", "noopener,noreferrer");
+  };
+
+  const onCopyLink = async () => {
+    try {
+      await navigator.clipboard.writeText(shareUrl);
+      alert("Paylaşım linki kopyalandı ✅");
+    } catch {
+      window.prompt("Linki kopyala:", shareUrl);
+    }
+  };
 
   return (
-    <main style={{ minHeight: "100vh", display: "grid", placeItems: "center", background: "#fff" }}>
-      <div style={{ width: 420, maxWidth: "90vw", border: "1px solid #ddd", borderRadius: 12, padding: 20 }}>
-        <h2 style={{ margin: 0, marginBottom: 12 }}>{decision}</h2>
+    <main className="min-h-screen bg-[#0b0f14] text-white p-4">
+      <div className="mx-auto max-w-xl space-y-4">
+        {/* Ürün */}
+        <div className="rounded-3xl border border-white/10 bg-white/5 p-5">
+          <div className="text-sm text-white/60">Ürün</div>
+          <div className="mt-1 text-xl font-semibold">{data.title}</div>
 
-        {loading && <p style={{ color: "#555" }}>Yükleniyor…</p>}
+          {data.cleanUrl ? (
+            <a
+              href={data.cleanUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="mt-2 inline-block text-xs text-white/50 underline underline-offset-4 hover:text-white/70"
+            >
+              Ürün linkini aç
+            </a>
+          ) : null}
 
-        {!loading && !data.ok && (
-          <p style={{ color: "crimson" }}>{data.error ?? "API çağrısı başarısız"}</p>
-        )}
+          {data.manualPriceUsed && (
+            <div className="mt-3 inline-flex items-center rounded-full bg-yellow-500/10 px-3 py-1 text-xs text-yellow-400">
+              Manuel fiyat kullanıldı
+            </div>
+          )}
+        </div>
 
-        <p><b>Başlık:</b> {uiTitle}</p>
-        <p><b>Fiyat:</b> {data.price ?? "—"} {data.currency ?? ""}</p>
-        <p><b>Puan:</b> {data.rating ?? "—"} / 5</p>
-        <p><b>Yorum:</b> {data.ratingCount ?? "—"}</p>
-        <p><b>Kaynak:</b> {data.source ?? "—"}</p>
+        {/* Skor */}
+        <div className="rounded-3xl border border-white/10 bg-white/5 p-5">
+          <div className="text-sm text-white/60">Bikonomi Skoru</div>
+          <div className="mt-2 text-5xl font-bold">{data.score}</div>
 
-        <a
-          href={url || "#"}
-          target="_blank"
-          rel="noreferrer"
-          style={{
-            display: "block",
-            marginTop: 16,
-            padding: 12,
-            background: "#16a34a",
-            color: "#fff",
-            textAlign: "center",
-            borderRadius: 10,
-            textDecoration: "none",
-            pointerEvents: url ? "auto" : "none",
-            opacity: url ? 1 : 0.6,
-          }}
-        >
-          Ürüne Git
-        </a>
+          {/* ✅ Karar rozeti */}
+          <div
+            className={`mt-2 inline-flex items-center rounded-full px-3 py-1 text-xs font-semibold ${
+              decision === "ALINIR"
+                ? "bg-green-500/15 text-green-400"
+                : decision === "DİKKAT"
+                ? "bg-yellow-500/15 text-yellow-400"
+                : "bg-red-500/15 text-red-400"
+            }`}
+          >
+            {decision}
+          </div>
+
+          {/* ✅ Skor açıklaması */}
+          <p className="mt-2 text-xs text-white/60">
+            Bu skor; fiyat, piyasa karşılaştırması, trend ve güven sinyallerine göre 0–100 arası
+            hesaplanır.
+          </p>
+
+          <div className="mt-4 grid grid-cols-2 gap-3 text-sm">
+            <ScoreLine label="💸 Fiyat" value={`${data.breakdown?.priceScore ?? 0}/45`} />
+            <ScoreLine label="📊 Piyasa" value={`${data.breakdown?.marketScore ?? 0}/20`} />
+            <ScoreLine label="📈 Trend" value={`${data.breakdown?.trendScore ?? 0}/15`} />
+            <ScoreLine label="🛡 Güven" value={`${data.breakdown?.trustScore ?? 0}/10`} />
+            <ScoreLine label="📦 Stok" value={`${data.breakdown?.availabilityScore ?? 0}/10`} />
+          </div>
+
+          {/* ✅ Paylaşım butonları */}
+          <div className="mt-5 flex flex-wrap gap-3">
+            <button
+              type="button"
+              onClick={onWhatsAppShare}
+              className="rounded-2xl bg-[#25D366] px-4 py-3 text-sm font-semibold text-black hover:opacity-90"
+            >
+              WhatsApp’ta Paylaş
+            </button>
+
+            <button
+              type="button"
+              onClick={onCopyLink}
+              className="rounded-2xl border border-white/10 bg-black/30 px-4 py-3 text-sm font-semibold text-white hover:bg-black/40"
+            >
+              Linki Kopyala
+            </button>
+
+            <a
+              href={shareUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm font-semibold text-white/90 hover:bg-white/10"
+            >
+              Paylaşım Linkini Aç
+            </a>
+          </div>
+
+          <div className="mt-2 text-[11px] text-white/40">
+            Not: Paylaşım linki otomatik <span className="font-mono">v=</span> ekleyerek WhatsApp
+            önizleme cache’ini kırar.
+          </div>
+        </div>
+
+        {/* Özet */}
+        <div className="rounded-3xl border border-white/10 bg-white/5 p-5 text-sm">
+          <div className="text-white/60">Özet</div>
+          <div className="mt-2 space-y-1">
+            <div>
+              En ucuz toplam: <b>{data.cheapestTotal}</b>
+            </div>
+            <div>
+              Median toplam: <b>{data.medianTotal}</b>
+            </div>
+            <div>
+              30 gün trend: <b>%{trendPct}</b>
+            </div>
+          </div>
+        </div>
       </div>
     </main>
   );
 }
-function explainScore({
-  score,
-  priceUsed,
-  rating,
-  ratingCount,
-}: {
-  score: number;
-  priceUsed: "auto" | "manual";
-  rating: number | null;
-  ratingCount: number | null;
-}) {
-  const lines: string[] = [];
 
-  if (priceUsed === "manual") {
-    lines.push("Fiyat bilgisi manuel girildiği için karşılaştırma sınırlı.");
-  } else {
-    lines.push("Fiyat piyasa verileriyle otomatik karşılaştırıldı.");
-  }
-
-  if (rating != null) {
-    if ((ratingCount ?? 0) < 5) {
-      lines.push("Yorum sayısı az olduğu için güven puanı bir miktar kırıldı.");
-    } else if (rating >= 4.5) {
-      lines.push("Kullanıcı memnuniyeti oldukça yüksek.");
-    } else if (rating >= 4.0) {
-      lines.push("Kullanıcı memnuniyeti iyi seviyede.");
-    }
-  }
-
-  if (score >= 85) {
-    lines.push("Genel değerlendirme: fiyat/performans açısından güçlü.");
-  } else if (score >= 70) {
-    lines.push("Genel değerlendirme: temkinli şekilde tercih edilebilir.");
-  } else {
-    lines.push("Genel değerlendirme: alternatifleri karşılaştırmak faydalı.");
-  }
-
-  return lines.slice(0, 2); // sadece 2 satır
+function ScoreLine({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-2xl border border-white/10 bg-black/20 p-3">
+      <div className="text-white/60 text-xs">{label}</div>
+      <div className="mt-1 font-semibold">{value}</div>
+    </div>
+  );
 }

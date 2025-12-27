@@ -3,158 +3,582 @@
 import { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
 
+type Offer = {
+  store: string;
+  price: number;
+  shipping: number;
+  inStock: boolean;
+  url: string;
+};
+
+type Point = { d: string; p: number };
+
+function tryParseHost(u: string) {
+  try {
+    const url = new URL(u);
+    return url.hostname.replace("www.", "");
+  } catch {
+    return "";
+  }
+}
+
+function fmtTL(n: number) {
+  const s = Math.round(n).toString();
+  const withDots = s.replace(/\B(?=(\d{3})+(?!\d))/g, ".");
+  return `${withDots} TL`;
+}
+
+function clamp(n: number, a: number, b: number) {
+  return Math.max(a, Math.min(b, n));
+}
+
+function scoreTone(score: number) {
+  if (score >= 80)
+    return {
+      label: "Çok iyi",
+      ring: "ring-emerald-400/60",
+      bg: "bg-emerald-500/10",
+      text: "text-emerald-300",
+      hint: "Piyasa ortalamasına göre avantajlı",
+    };
+  if (score >= 60)
+    return {
+      label: "İyi",
+      ring: "ring-lime-400/60",
+      bg: "bg-lime-500/10",
+      text: "text-lime-300",
+      hint: "Genelde iyi, küçük sapmalar var",
+    };
+  if (score >= 40)
+    return {
+      label: "Orta",
+      ring: "ring-amber-400/60",
+      bg: "bg-amber-500/10",
+      text: "text-amber-300",
+      hint: "Daha iyi fırsat çıkabilir",
+    };
+  return {
+    label: "Riskli",
+    ring: "ring-rose-400/60",
+    bg: "bg-rose-500/10",
+    text: "text-rose-300",
+    hint: "Fiyat/Trend açısından riskli",
+  };
+}
+
+function trendLabel(deltaPct: number) {
+  if (deltaPct <= -8)
+    return { t: "Piyasanın çok altında", cls: "bg-emerald-500/15 text-emerald-200 ring-1 ring-emerald-400/40" };
+  if (deltaPct <= -3)
+    return { t: "Piyasanın altında", cls: "bg-lime-500/15 text-lime-200 ring-1 ring-lime-400/40" };
+  if (deltaPct < 3)
+    return { t: "Piyasa bandında", cls: "bg-slate-500/15 text-slate-200 ring-1 ring-slate-400/30" };
+  if (deltaPct < 8)
+    return { t: "Piyasanın üstünde", cls: "bg-amber-500/15 text-amber-200 ring-1 ring-amber-400/40" };
+  return { t: "Piyasanın çok üstünde", cls: "bg-rose-500/15 text-rose-200 ring-1 ring-rose-400/40" };
+}
+
+function simpleSparklinePath(points: Point[], w = 640, h = 160, pad = 16) {
+  if (!points.length) return "";
+  const prices = points.map((x) => x.p);
+  const minP = Math.min(...prices);
+  const maxP = Math.max(...prices);
+  const span = Math.max(1, maxP - minP);
+
+  const innerW = w - pad * 2;
+  const innerH = h - pad * 2;
+
+  const xy = points.map((pt, i) => {
+    const x = pad + (i * innerW) / Math.max(1, points.length - 1);
+    const y = pad + (1 - (pt.p - minP) / span) * innerH;
+    return { x, y };
+  });
+
+  let d = `M ${xy[0].x.toFixed(2)} ${xy[0].y.toFixed(2)}`;
+  for (let i = 1; i < xy.length; i++) d += ` L ${xy[i].x.toFixed(2)} ${xy[i].y.toFixed(2)}`;
+  return d;
+}
+
+function last<T>(arr: T[]) {
+  return arr[arr.length - 1];
+}
+function first<T>(arr: T[]) {
+  return arr[0];
+}
+
+function makeMockProduct(inputUrl: string) {
+  const host = tryParseHost(inputUrl);
+  const baseTitle = "LineDeck — 4 Katlı Modüler Raf (50x128 cm)";
+  const title = host ? `${baseTitle} · ${host}` : baseTitle;
+
+  const points: Point[] = [
+    { d: "G-30", p: 1299 },
+    { d: "G-26", p: 1290 },
+    { d: "G-22", p: 1279 },
+    { d: "G-18", p: 1269 },
+    { d: "G-14", p: 1249 },
+    { d: "G-10", p: 1249 },
+    { d: "G-6", p: 1259 },
+    { d: "G-3", p: 1249 },
+    { d: "Bugün", p: 1249 },
+  ];
+
+  const offers: Offer[] = [
+    {
+      store: "Trendyol",
+      price: 1249,
+      shipping: 0,
+      inStock: true,
+      // Trendyol linki geldiyse onu kullan, değilse trendyo ana sayfa
+      url: inputUrl.includes("trendyol.com") ? inputUrl : "https://www.trendyol.com",
+    },
+    {
+      store: "Hepsiburada",
+      price: 1299,
+      shipping: 39,
+      inStock: true,
+      url: "https://www.hepsiburada.com",
+    },
+    {
+      store: "Amazon",
+      price: 1349,
+      shipping: 0,
+      inStock: false,
+      url: "https://www.amazon.com.tr",
+    },
+  ];
+
+  const cheapest = offers
+    .filter((o) => o.inStock)
+    .slice()
+    .sort((a, b) => a.price + a.shipping - (b.price + b.shipping))[0];
+
+  const marketAvg =
+    offers.filter((o) => o.inStock).reduce((s, o) => s + o.price + o.shipping, 0) /
+    Math.max(1, offers.filter((o) => o.inStock).length);
+
+  const deltaPct = ((cheapest.price + cheapest.shipping - marketAvg) / marketAvg) * 100;
+
+  const p0 = first(points).p;
+  const p1 = last(points).p;
+  const changePct = ((p1 - p0) / Math.max(1, p0)) * 100;
+
+  const volatility = (() => {
+    const ps = points.map((x) => x.p);
+    const mean = ps.reduce((s, v) => s + v, 0) / ps.length;
+    const varr = ps.reduce((s, v) => s + (v - mean) * (v - mean), 0) / ps.length;
+    return Math.sqrt(varr);
+  })();
+
+  let score = 65;
+  score += clamp((-deltaPct) * 1.8, -18, 18);
+  score += clamp(-changePct * 0.6, -12, 12);
+  score += clamp(18 - volatility / 8, -10, 10);
+  if (!cheapest?.inStock) score -= 15;
+  score = clamp(Math.round(score), 0, 100);
+
+  return {
+    title,
+    image: "https://dummyimage.com/640x640/111827/ffffff&text=Bikonomi",
+    brand: "LineDeck",
+    category: "Ev & Yaşam / Raf",
+    points,
+    offers,
+    cheapest,
+    marketAvg,
+    deltaPct,
+    score,
+    changePct,
+    volatility,
+    updatedAt: new Date().toISOString(),
+  };
+}
+
 export default function CheckClient() {
   const sp = useSearchParams();
 
   const uRaw = sp.get("u") || "";
-  const pRaw = sp.get("p") || "";
-
   const u = useMemo(() => uRaw.trim(), [uRaw]);
-  const p = useMemo(() => pRaw.trim(), [pRaw]);
 
-  const [data, setData] = useState<any>(null);
-  const [err, setErr] = useState<string>("");
-  const [loading, setLoading] = useState<boolean>(true);
+  const [manualUrl, setManualUrl] = useState<string>(u);
+  const inputUrl = u || manualUrl;
+
+  const data = useMemo(() => makeMockProduct(inputUrl || "https://example.com"), [inputUrl]);
+
+  // ✅ Canlı Trendyol fiyatı
+  const [livePrice, setLivePrice] = useState<number | null>(null);
+  const [liveLoading, setLiveLoading] = useState(false);
 
   useEffect(() => {
-    if (!u) {
-      setErr("Link bulunamadı. Ana sayfaya dönüp ürün linkini yapıştır.");
-      setLoading(false);
-      return;
+    let cancelled = false;
+
+    async function run() {
+      // sadece Trendyol linkinde dene
+      if (!inputUrl || !inputUrl.includes("trendyol.com")) {
+        setLivePrice(null);
+        setLiveLoading(false);
+        return;
+      }
+
+      try {
+        setLiveLoading(true);
+        const r = await fetch(`/api/trendyol?u=${encodeURIComponent(inputUrl)}`, { cache: "no-store" });
+        const j = await r.json();
+
+        if (cancelled) return;
+
+        if (r.ok && typeof j?.price === "number") {
+          setLivePrice(j.price);
+        } else {
+          setLivePrice(null);
+        }
+      } catch {
+        if (!cancelled) setLivePrice(null);
+      } finally {
+        if (!cancelled) setLiveLoading(false);
+      }
     }
 
-    const ctrl = new AbortController();
+    run();
+    return () => {
+      cancelled = true;
+    };
+  }, [inputUrl]);
 
-    (async () => {
-      try {
-        setErr("");
-        setLoading(true);
-
-        const res = await fetch(
-          `/api/analyze?u=${encodeURIComponent(u)}&p=${encodeURIComponent(p)}`,
-          { signal: ctrl.signal, cache: "no-store" }
-        );
-
-        let json: any = null;
-        try {
-          json = await res.json();
-        } catch {
-          throw new Error("Sunucudan geçersiz yanıt alındı (JSON değil).");
-        }
-
-        if (!res.ok) {
-          const msg = json?.detail
-            ? `${json.error}: ${json.detail}`
-            : json?.error || "Analyze failed";
-          throw new Error(msg);
-        }
-
-        setData(json);
-      } catch (e: any) {
-        if (e?.name === "AbortError") return;
-        setErr(e?.message || "Hata");
-      } finally {
-        setLoading(false);
+  // ✅ canlı fiyat sadece Trendyol teklifine yansısın (UI stabil)
+  const offers = useMemo(() => {
+    return data.offers.map((o) => {
+      if (o.store === "Trendyol" && typeof livePrice === "number") {
+        return { ...o, price: livePrice };
       }
-    })();
+      return o;
+    });
+  }, [data.offers, livePrice]);
 
-    return () => ctrl.abort();
-  }, [u, p]);
+  // ✅ en ucuz hesabını canlı fiyatla güncelle (sadece görüntü amaçlı)
+  const cheapest = useMemo(() => {
+    return offers
+      .filter((o) => o.inStock)
+      .slice()
+      .sort((a, b) => a.price + a.shipping - (b.price + b.shipping))[0];
+  }, [offers]);
 
-  if (loading) return <div className="p-4 text-white">Analiz ediliyor…</div>;
-  if (err) return <div className="p-4 text-red-300">Hata: {err}</div>;
-  if (!data) return <div className="p-4 text-white">Veri yok.</div>;
+  const marketAvg = useMemo(() => {
+    const inStocks = offers.filter((o) => o.inStock);
+    const sum = inStocks.reduce((s, o) => s + o.price + o.shipping, 0);
+    return sum / Math.max(1, inStocks.length);
+  }, [offers]);
 
-  const trendPct = Math.round(((data.trend30dPct ?? 0) * 100) as number);
+  const deltaPct = useMemo(() => {
+    const ch = cheapest;
+    return ((ch.price + ch.shipping - marketAvg) / marketAvg) * 100;
+  }, [cheapest, marketAvg]);
 
-  // ✅ Karar: hook yok, sadece hesap
-  const s = Number(data?.score ?? 0);
-  const decision = s >= 85 ? "ALINIR" : s >= 70 ? "DİKKAT" : "ALINMAZ";
+  const tone = scoreTone(data.score); // skor aynı: MVP’de sabit kalacak
+  const label = trendLabel(deltaPct);
+
+  const path = useMemo(() => simpleSparklinePath(data.points, 720, 180, 18), [data.points]);
 
   return (
-    <main className="min-h-screen bg-[#0b0f14] text-white p-4">
-      <div className="mx-auto max-w-xl space-y-4">
-        {/* Ürün */}
-        <div className="rounded-3xl border border-white/10 bg-white/5 p-5">
-          <div className="text-sm text-white/60">Ürün</div>
-          <div className="mt-1 text-xl font-semibold">{data.title}</div>
-
-          {data.cleanUrl ? (
-            <a
-              href={data.cleanUrl}
-              target="_blank"
-              rel="noreferrer"
-              className="mt-2 inline-block text-xs text-white/50 underline underline-offset-4 hover:text-white/70"
-            >
-              Ürün linkini aç
-            </a>
-          ) : null}
-
-          {data.manualPriceUsed && (
-            <div className="mt-3 inline-flex items-center rounded-full bg-yellow-500/10 px-3 py-1 text-xs text-yellow-400">
-              Manuel fiyat kullanıldı
+    <main className="min-h-screen bg-[#0b1020] text-slate-100">
+      {/* Top bar */}
+      <div className="sticky top-0 z-40 border-b border-white/10 bg-[#0b1020]/80 backdrop-blur">
+        <div className="mx-auto flex w-full max-w-5xl items-center justify-between px-4 py-3">
+          <div className="flex items-center gap-3">
+            <div className="grid h-9 w-9 place-items-center rounded-xl bg-white/10 ring-1 ring-white/10">
+              <div className="h-4 w-5">
+                <div className="h-[3px] w-full rounded bg-white/90" />
+                <div className="mt-[5px] h-[3px] w-4/5 rounded bg-white/90" />
+                <div className="mt-[5px] h-[3px] w-3/5 rounded bg-white/90" />
+              </div>
             </div>
-          )}
-        </div>
-
-        {/* Skor */}
-        <div className="rounded-3xl border border-white/10 bg-white/5 p-5">
-          <div className="text-sm text-white/60">Bikonomi Skoru</div>
-          <div className="mt-2 text-5xl font-bold">{data.score}</div>
-
-          {/* ✅ Karar rozeti */}
-          <div
-            className={`mt-2 inline-flex items-center rounded-full px-3 py-1 text-xs font-semibold ${
-              decision === "ALINIR"
-                ? "bg-green-500/15 text-green-400"
-                : decision === "DİKKAT"
-                ? "bg-yellow-500/15 text-yellow-400"
-                : "bg-red-500/15 text-red-400"
-            }`}
-          >
-            {decision}
-          </div>
-
-          {/* ✅ Skor açıklaması */}
-          <p className="mt-2 text-xs text-white/60">
-            Bu skor; fiyat, piyasa karşılaştırması, trend ve güven sinyallerine göre 0–100 arası
-            hesaplanır.
-          </p>
-
-          <div className="mt-4 grid grid-cols-2 gap-3 text-sm">
-            <ScoreLine label="💸 Fiyat" value={`${data.breakdown?.priceScore ?? 0}/45`} />
-            <ScoreLine label="📊 Piyasa" value={`${data.breakdown?.marketScore ?? 0}/20`} />
-            <ScoreLine label="📈 Trend" value={`${data.breakdown?.trendScore ?? 0}/15`} />
-            <ScoreLine label="🛡 Güven" value={`${data.breakdown?.trustScore ?? 0}/10`} />
-            <ScoreLine label="📦 Stok" value={`${data.breakdown?.availabilityScore ?? 0}/10`} />
-          </div>
-        </div>
-
-        {/* Özet */}
-        <div className="rounded-3xl border border-white/10 bg-white/5 p-5 text-sm">
-          <div className="text-white/60">Özet</div>
-          <div className="mt-2 space-y-1">
-            <div>
-              En ucuz toplam: <b>{data.cheapestTotal}</b>
-            </div>
-            <div>
-              Median toplam: <b>{data.medianTotal}</b>
-            </div>
-            <div>
-              30 gün trend: <b>%{trendPct}</b>
+            <div className="leading-tight">
+              <div className="text-sm font-semibold">Bikonomi</div>
+              <div className="text-xs text-slate-300">Ürün Analizi</div>
             </div>
           </div>
+
+          <span className="hidden sm:inline-flex items-center gap-2 rounded-full bg-white/5 px-3 py-1 text-xs text-slate-200 ring-1 ring-white/10">
+            {inputUrl.includes("trendyol.com") ? (liveLoading ? "Canlı fiyat alınıyor…" : "Trendyol Canlı") : "Mock Modu"}
+            <span className={`h-1.5 w-1.5 rounded-full ${inputUrl.includes("trendyol.com") ? "bg-emerald-400" : "bg-slate-400"}`} />
+          </span>
         </div>
       </div>
-    </main>
-  );
-}
 
-function ScoreLine({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="rounded-2xl border border-white/10 bg-black/20 p-3">
-      <div className="text-white/60 text-xs">{label}</div>
-      <div className="mt-1 font-semibold">{value}</div>
-    </div>
+      <div className="mx-auto w-full max-w-5xl px-4 py-5 sm:py-8">
+        {/* URL input */}
+        <div className="mb-5 rounded-2xl bg-white/5 p-3 ring-1 ring-white/10 sm:mb-7 sm:p-4">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+            <div className="text-sm text-slate-200 sm:min-w-32">Ürün linki</div>
+            <div className="flex-1">
+              <input
+                value={manualUrl}
+                onChange={(e) => setManualUrl(e.target.value)}
+                placeholder="Linki yapıştır (ör: Trendyol / Hepsiburada / Amazon)"
+                className="w-full rounded-xl bg-[#0b1020]/60 px-4 py-3 text-sm text-slate-100 ring-1 ring-white/10 outline-none placeholder:text-slate-400 focus:ring-2 focus:ring-white/20"
+              />
+              <div className="mt-2 text-xs text-slate-400">
+                {inputUrl.includes("trendyol.com")
+                  ? "Trendyol linklerinde fiyat canlı çekilir. Diğer her şey MVP’de mock kalır."
+                  : "Not: Şu an mock data gösteriyor. Trendyol linki verirsen fiyat canlı gelir."}
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 gap-5 lg:grid-cols-[1.2fr_.8fr] lg:gap-6">
+          {/* Left */}
+          <section className="space-y-5">
+            <div className="rounded-3xl bg-white/5 p-4 ring-1 ring-white/10 sm:p-5">
+              <div className="flex flex-col gap-4 sm:flex-row sm:items-start">
+                <div className="relative w-full overflow-hidden rounded-2xl bg-black/20 ring-1 ring-white/10 sm:h-36 sm:w-36">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src={data.image} alt={data.title} className="h-44 w-full object-cover sm:h-36" loading="lazy" />
+                  <div className="absolute left-2 top-2 rounded-full bg-black/40 px-2 py-1 text-[11px] text-slate-100 ring-1 ring-white/10">
+                    {data.category}
+                  </div>
+                </div>
+
+                <div className="flex-1">
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div>
+                      <h1 className="text-base font-semibold leading-snug sm:text-lg">{data.title}</h1>
+                      <div className="mt-1 text-sm text-slate-300">
+                        Marka: <span className="text-slate-200">{data.brand}</span>
+                      </div>
+                    </div>
+
+                    {/* Score chip */}
+                    <div className={`shrink-0 rounded-2xl ${tone.bg} px-4 py-3 ring-1 ${tone.ring}`}>
+                      <div className="flex items-center gap-3">
+                        <div className="grid h-12 w-12 place-items-center rounded-2xl bg-white/5 ring-1 ring-white/10">
+                          <div className="text-[26px] leading-none font-extrabold">{data.score}</div>
+                        </div>
+                        <div className="min-w-44">
+                          <div className={`text-sm font-semibold ${tone.text}`}>{tone.label}</div>
+                          <div className="text-xs text-slate-300">Bikonomi Skoru</div>
+                          <div className="mt-1 text-[11px] text-slate-200/80">{tone.hint}</div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="mt-4 flex flex-wrap items-center gap-2">
+                    <span className={`inline-flex items-center rounded-full px-3 py-1 text-xs ${label.cls}`}>{label.t}</span>
+                    <span className="text-xs text-slate-400">
+                      Piyasa ort.: <span className="text-slate-200">{fmtTL(marketAvg)}</span>
+                    </span>
+                    <span className="text-xs text-slate-400">
+                      Fark:{" "}
+                      <span className="text-slate-200">
+                        {deltaPct >= 0 ? "+" : ""}
+                        {deltaPct.toFixed(1)}%
+                      </span>
+                    </span>
+
+                    {inputUrl.includes("trendyol.com") && (
+                      <span className="text-xs text-slate-400">
+                        Canlı fiyat:{" "}
+                        <span className="text-slate-200">
+                          {liveLoading ? "…" : typeof livePrice === "number" ? "alındı" : "yok"}
+                        </span>
+                      </span>
+                    )}
+                  </div>
+
+                  <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-3">
+                    <div className="rounded-2xl bg-black/20 p-3 ring-1 ring-white/10">
+                      <div className="text-xs text-slate-400">En ucuz mağaza</div>
+                      <div className="mt-1 text-sm font-semibold">{cheapest.store}</div>
+                    </div>
+
+                    <div className="rounded-2xl bg-black/20 p-3 ring-1 ring-white/10">
+                      <div className="text-xs text-slate-400">Toplam fiyat</div>
+                      <div className="mt-1 text-sm font-semibold">{fmtTL(cheapest.price + cheapest.shipping)}</div>
+                      <div className="mt-1 text-[11px] text-slate-400">
+                        {cheapest.shipping === 0 ? "Kargo dahil" : `Kargo: ${fmtTL(cheapest.shipping)}`}
+                      </div>
+                    </div>
+
+                    <div className="rounded-2xl bg-black/20 p-3 ring-1 ring-white/10">
+                      <div className="text-xs text-slate-400">Stok</div>
+                      <div className="mt-1 text-sm font-semibold">{cheapest.inStock ? "Stokta" : "Stok yok"}</div>
+                      <div className="mt-1 text-[11px] text-slate-400">
+                        Güncellendi: {new Date(data.updatedAt).toLocaleString("tr-TR")}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Chart */}
+            <div className="rounded-3xl bg-white/5 p-4 ring-1 ring-white/10 sm:p-5">
+              <div className="flex flex-wrap items-end justify-between gap-3">
+                <div>
+                  <div className="text-sm font-semibold">Fiyat Geçmişi</div>
+                  <div className="mt-1 text-xs text-slate-400">Son 30 gün (mock)</div>
+                </div>
+                <div className="text-xs text-slate-300">
+                  30g değişim:{" "}
+                  <span className="text-slate-100">
+                    {data.changePct >= 0 ? "+" : ""}
+                    {data.changePct.toFixed(1)}%
+                  </span>
+                </div>
+              </div>
+
+              <div className="mt-4 overflow-hidden rounded-2xl bg-[#0b1020]/60 ring-1 ring-white/10">
+                <svg viewBox="0 0 720 180" className="h-44 w-full">
+                  <g opacity="0.25">
+                    {[30, 60, 90, 120, 150].map((y) => (
+                      <line key={y} x1="0" x2="720" y1={y} y2={y} stroke="white" strokeWidth="1" />
+                    ))}
+                  </g>
+                  <path d={path} fill="none" stroke="white" strokeWidth="3" opacity="0.85" />
+                  {data.points.map((pt, i) => {
+                    const prices = data.points.map((x) => x.p);
+                    const minP = Math.min(...prices);
+                    const maxP = Math.max(...prices);
+                    const span = Math.max(1, maxP - minP);
+                    const pad = 18;
+                    const innerW = 720 - pad * 2;
+                    const innerH = 180 - pad * 2;
+                    const x = pad + (i * innerW) / Math.max(1, data.points.length - 1);
+                    const y = pad + (1 - (pt.p - minP) / span) * innerH;
+                    return (
+                      <g key={pt.d}>
+                        <circle cx={x} cy={y} r="5" fill="white" opacity="0.9" />
+                      </g>
+                    );
+                  })}
+                </svg>
+              </div>
+            </div>
+          </section>
+
+          {/* Right */}
+          <aside className="space-y-5">
+            {/* Ad slot */}
+            <div className="rounded-3xl bg-gradient-to-br from-white/10 to-white/5 p-5 ring-1 ring-white/10">
+              <div className="text-xs text-slate-300">Sponsor Alanı</div>
+              <div className="mt-2 text-lg font-semibold leading-snug">Buraya reklam / kampanya alanı</div>
+              <div className="mt-2 text-sm text-slate-300">(MVP’de boş duracak, ama yerini şimdiden kilitliyoruz.)</div>
+              <div className="mt-4 inline-flex items-center rounded-full bg-black/20 px-3 py-1 text-xs text-slate-200 ring-1 ring-white/10">
+                728×90 / 300×250 uyumlu
+              </div>
+            </div>
+
+            {/* Offers */}
+            <div className="rounded-3xl bg-white/5 p-4 ring-1 ring-white/10 sm:p-5">
+              <div className="flex items-end justify-between gap-3">
+                <div>
+                  <div className="text-sm font-semibold">Mağaza Karşılaştırması</div>
+                  <div className="mt-1 text-xs text-slate-400">Toplam fiyata göre</div>
+                </div>
+                <div className="text-xs text-slate-300">
+                  Sıralama: <span className="text-slate-100">En ucuz →</span>
+                </div>
+              </div>
+
+              <div className="mt-4 space-y-3">
+                {offers
+                  .slice()
+                  .sort((a, b) => a.price + a.shipping - (b.price + b.shipping))
+                  .map((o) => {
+                    const total = o.price + o.shipping;
+                    const isBest = o.store === cheapest.store && o.inStock;
+
+                    // ✅ sadece en ucuz aktif link
+                    const canGo = isBest && !!o.url;
+
+                    return (
+                      <div
+                        key={o.store}
+                        className={`rounded-2xl p-4 ring-1 ${
+                          isBest ? "bg-emerald-500/10 ring-emerald-400/40" : "bg-black/20 ring-white/10"
+                        }`}
+                      >
+                        <div className="flex items-start justify-between gap-3">
+                          <div>
+                            <div className="flex items-center gap-2">
+                              <div className="text-sm font-semibold">{o.store}</div>
+
+                              {isBest && (
+                                <>
+                                  <span className="rounded-full bg-emerald-500/20 px-2 py-0.5 text-[11px] text-emerald-200 ring-1 ring-emerald-400/30">
+                                    En ucuz
+                                  </span>
+                                  <span className="rounded-full bg-emerald-500 px-2.5 py-0.5 text-[11px] font-semibold text-black shadow-sm">
+                                    Önerilen
+                                  </span>
+                                </>
+                              )}
+
+                              {!o.inStock && (
+                                <span className="rounded-full bg-rose-500/20 px-2 py-0.5 text-[11px] text-rose-200 ring-1 ring-rose-400/30">
+                                  Stok yok
+                                </span>
+                              )}
+
+                              {o.store === "Trendyol" && inputUrl.includes("trendyol.com") && (
+                                <span className="rounded-full bg-white/5 px-2 py-0.5 text-[11px] text-slate-200 ring-1 ring-white/10">
+                                  {liveLoading ? "Canlı…" : typeof livePrice === "number" ? "Canlı" : "Mock"}
+                                </span>
+                              )}
+                            </div>
+
+                            <div className="mt-1 text-xs text-slate-400">
+                              Fiyat: <span className="text-slate-200">{fmtTL(o.price)}</span> · Kargo:{" "}
+                              <span className="text-slate-200">{o.shipping === 0 ? "Dahil" : fmtTL(o.shipping)}</span>
+                            </div>
+                          </div>
+
+                          <div className="text-right">
+                            <div className="text-xs text-slate-400">Toplam</div>
+                            <div className="text-base font-semibold">{fmtTL(total)}</div>
+                          </div>
+                        </div>
+
+                        {canGo ? (
+                          <>
+                            <a
+                              href={o.url}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="mt-3 block w-full rounded-xl bg-white px-4 py-2.5 text-center text-sm font-semibold text-black ring-1 ring-white/20 transition hover:bg-white/90"
+                            >
+                              Mağazaya git
+                            </a>
+
+                            <div className="mt-2 flex items-center gap-2 text-[11px] text-slate-300">
+                              <span className="inline-block h-1.5 w-1.5 rounded-full bg-emerald-400" />
+                              Bikonomi bu mağazayı, toplam fiyata göre daha avantajlı buldu.
+                            </div>
+                          </>
+                        ) : (
+                          <button
+                            disabled
+                            className="mt-3 w-full cursor-not-allowed rounded-xl bg-white/10 px-4 py-2.5 text-sm font-semibold text-slate-400 ring-1 ring-white/10"
+                            title="Şimdilik sadece en ucuz mağaza aktif"
+                          >
+                            Mağazaya git
+                          </button>
+                        )}
+                      </div>
+                    );
+                  })}
+              </div>
+
+              <div className="mt-4 text-[11px] text-slate-400">
+                Şimdilik yalnızca <span className="text-slate-200">en ucuz</span> mağaza aktif. (MVP kontrolü)
+              </div>
+            </div>
+          </aside>
+        </div>
+
+        <div className="mt-10 pb-10 text-center text-xs text-slate-500">© {new Date().getFullYear()} Bikonomi · MVP</div>
+      </div>
+    </main>
   );
 }
