@@ -1,699 +1,491 @@
-// src/app/check/ui.tsx
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 
-type Offer = {
-  store: string;
-  price: number;
-  shipping: number;
-  inStock: boolean;
-  url: string;
+type Verdict = "Alınır" | "Düşünülebilir" | "Uzak Dur";
+type OfferVerdict = "Mantıklı" | "Olur" | "Mantıksız";
+
+type AnalyzeResponse = {
+  ok: boolean;
+  mode: "auto" | "partial" | "manual_required";
+  product: {
+    productKey: string;
+    source: string;
+    title: string;
+    image: string;
+  };
+  market: { avgPrice: number | null; confidence: number; sampleCount: number };
+  score: {
+    final: number;
+    verdict: Verdict;
+    summary: string;
+    breakdown: { price: number; shipping: number; trust: number; market: number };
+  };
+  offers: Array<{
+    store: string;
+    price: number;
+    shipping: number;
+    total: number;
+    inStock: boolean;
+    verdict: OfferVerdict;
+    url: string;
+  }>;
+  actions: {
+    allowManual: boolean;
+    searchLinks: Array<{ store: string; url: string }>;
+  };
+  message?: string;
 };
 
-type Point = { d: string; p: number };
-
-function fmtTL(n: number) {
-  const s = Math.round(n).toString();
-  const withDots = s.replace(/\B(?=(\d{3})+(?!\d))/g, ".");
-  return `${withDots} TL`;
+function cx(...a: Array<string | false | null | undefined>) {
+  return a.filter(Boolean).join(" ");
 }
 
-function tryParseHost(u: string) {
+function fmtTRY(n: number) {
   try {
-    const url = new URL(u);
-    return url.hostname.replace("www.", "");
+    return new Intl.NumberFormat("tr-TR", {
+      style: "currency",
+      currency: "TRY",
+      maximumFractionDigits: 0,
+    }).format(n);
   } catch {
-    return "";
+    return `${Math.round(n)} ₺`;
   }
 }
 
-function clamp(n: number, a: number, b: number) {
-  return Math.max(a, Math.min(b, n));
+function badgeByOfferVerdict(v: OfferVerdict) {
+  if (v === "Mantıklı") return "bg-emerald-600/10 text-emerald-700 border-emerald-700/20";
+  if (v === "Olur") return "bg-amber-600/10 text-amber-700 border-amber-700/20";
+  return "bg-rose-600/10 text-rose-700 border-rose-700/20";
 }
 
-function scoreTone(score: number) {
-  if (score >= 80)
-    return {
-      label: "Çok iyi",
-      ring: "ring-emerald-400/60",
-      bg: "bg-emerald-500/10",
-      text: "text-emerald-300",
-      hint: "Piyasa ortalamasına göre avantajlı",
-    };
-  if (score >= 60)
-    return {
-      label: "İyi",
-      ring: "ring-lime-400/60",
-      bg: "bg-lime-500/10",
-      text: "text-lime-300",
-      hint: "Genelde iyi, küçük sapmalar var",
-    };
-  if (score >= 40)
-    return {
-      label: "Orta",
-      ring: "ring-amber-400/60",
-      bg: "bg-amber-500/10",
-      text: "text-amber-300",
-      hint: "Daha iyi fırsat çıkabilir",
-    };
-  return {
-    label: "Riskli",
-    ring: "ring-rose-400/60",
-    bg: "bg-rose-500/10",
-    text: "text-rose-300",
-    hint: "Fiyat/Trend açısından riskli",
-  };
+function scoreColor(score: number) {
+  if (score >= 80) return "text-emerald-600";
+  if (score >= 60) return "text-amber-600";
+  return "text-rose-600";
 }
 
-function trendLabel(deltaPct: number) {
-  if (deltaPct <= -8)
-    return { t: "Piyasanın çok altında", cls: "bg-emerald-500/15 text-emerald-200 ring-1 ring-emerald-400/40" };
-  if (deltaPct <= -3)
-    return { t: "Piyasanın altında", cls: "bg-lime-500/15 text-lime-200 ring-1 ring-lime-400/40" };
-  if (deltaPct < 3)
-    return { t: "Piyasa bandında", cls: "bg-slate-500/15 text-slate-200 ring-1 ring-slate-400/30" };
-  if (deltaPct < 8)
-    return { t: "Piyasanın üstünde", cls: "bg-amber-500/15 text-amber-200 ring-1 ring-amber-400/40" };
-  return { t: "Piyasanın çok üstünde", cls: "bg-rose-500/15 text-rose-200 ring-1 ring-rose-400/40" };
+function scoreRing(score: number) {
+  if (score >= 80) return "border-emerald-700/20 bg-emerald-600/10";
+  if (score >= 60) return "border-amber-700/20 bg-amber-600/10";
+  return "border-rose-700/20 bg-rose-600/10";
 }
 
-function simpleSparklinePath(points: Point[], w = 720, h = 180, pad = 18) {
-  if (!points.length) return "";
-  const prices = points.map((x) => x.p);
-  const minP = Math.min(...prices);
-  const maxP = Math.max(...prices);
-  const span = Math.max(1, maxP - minP);
-
-  const innerW = w - pad * 2;
-  const innerH = h - pad * 2;
-
-  const xy = points.map((pt, i) => {
-    const x = pad + (i * innerW) / Math.max(1, points.length - 1);
-    const y = pad + (1 - (pt.p - minP) / span) * innerH;
-    return { x, y };
-  });
-
-  let d = `M ${xy[0].x.toFixed(2)} ${xy[0].y.toFixed(2)}`;
-  for (let i = 1; i < xy.length; i++) d += ` L ${xy[i].x.toFixed(2)} ${xy[i].y.toFixed(2)}`;
-  return d;
-}
-
-function first<T>(arr: T[]) {
-  return arr[0];
-}
-function last<T>(arr: T[]) {
-  return arr[arr.length - 1];
-}
-
-function detectSource(u: string) {
-  const s = (u || "").toLowerCase();
-  if (s.includes("trendyol.com")) return "trendyol";
-  if (
-    s.includes("hepsiburada.com") ||
-    s.includes("www.hepsiburada.com") ||
-    s.includes("m.hepsiburada.com") ||
-    s.includes("hepsiburada.com.tr")
-  ) {
-    return "hepsiburada";
-  }
-  if (s.includes("amazon.")) return "amazon";
-  return "unknown";
-}
-
-function extractTrendyolId(u: string) {
-  try {
-    const url = new URL(u);
-    const m = url.pathname.match(/-p-(\d+)/i);
-    return m?.[1] || null;
-  } catch {
-    return null;
-  }
-}
-
-function extractHBCode(u: string) {
-  try {
-    const url = new URL(u);
-    const m = url.pathname.match(/-p-(HBCV[0-9A-Z]+)/i);
-    return m?.[1] || null;
-  } catch {
-    return null;
-  }
-}
-
-// ---------------- localStorage history (MVP SAFE) ----------------
-// ✅ Saatlik anahtar: YYYY-MM-DD HH  (debug yok, otomatik hızlandırma)
-function slotKeyHourly() {
-  const d = new Date();
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
-  const h = String(d.getHours()).padStart(2, "0");
-  return `${y}-${m}-${day} ${h}`;
-}
-
-function makeHistoryStorageKey(inputUrl: string) {
-  const source = detectSource(inputUrl);
-
-  if (source === "trendyol") {
-    const id = extractTrendyolId(inputUrl) || "unknown";
-    return `bikonomi:hist:trendyol:${id}`;
-  }
-  if (source === "hepsiburada") {
-    const code = extractHBCode(inputUrl) || "unknown";
-    return `bikonomi:hist:hepsiburada:${code}`;
-  }
-
-  try {
-    const u = new URL(inputUrl);
-    return `bikonomi:hist:${u.hostname}:${u.pathname.slice(0, 120)}`;
-  } catch {
-    return "bikonomi:hist:unknown";
-  }
-}
-
-function readHistory(key: string): Point[] {
-  try {
-    const raw = localStorage.getItem(key);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed)) return [];
-    return parsed
-      .filter((x) => x && typeof x.d === "string" && typeof x.p === "number")
-      .slice(-180);
-  } catch {
-    return [];
-  }
-}
-
-function writeHistory(key: string, points: Point[]) {
-  try {
-    localStorage.setItem(key, JSON.stringify(points.slice(-180)));
-  } catch {
-    // ignore
-  }
-}
-
-function upsertHourly(points: Point[], price: number): Point[] {
-  const d = slotKeyHourly();
-  const next = points.slice();
-  if (next.length && next[next.length - 1].d === d) {
-    next[next.length - 1] = { d, p: price };
-    return next;
-  }
-  return [...next, { d, p: price }];
-}
-
-function pctChange(points: Point[]) {
-  if (points.length < 2) return 0;
-  const p0 = first(points).p;
-  const p1 = last(points).p;
-  return ((p1 - p0) / Math.max(1, p0)) * 100;
-}
-// ----------------------------------------------------------------
-
-function makeMockProduct(inputUrl: string) {
-  const host = tryParseHost(inputUrl);
-  const baseTitle = "LineDeck — 4 Katlı Modüler Raf (50x128 cm)";
-  const title = host ? `${baseTitle} · ${host}` : baseTitle;
-
-  const mockPoints: Point[] = [
-    { d: "G-30", p: 1299 },
-    { d: "G-26", p: 1290 },
-    { d: "G-22", p: 1279 },
-    { d: "G-18", p: 1269 },
-    { d: "G-14", p: 1249 },
-    { d: "G-10", p: 1249 },
-    { d: "G-6", p: 1259 },
-    { d: "G-3", p: 1249 },
-    { d: "Bugün", p: 1249 },
-  ];
-
-  const offers: Offer[] = [
-    {
-      store: "Trendyol",
-      price: 1249,
-      shipping: 0,
-      inStock: true,
-      url: inputUrl.includes("trendyol.com") ? inputUrl : "https://www.trendyol.com",
-    },
-    {
-      store: "Hepsiburada",
-      price: 1299,
-      shipping: 39,
-      inStock: true,
-      url: inputUrl.includes("hepsiburada.com") ? inputUrl : "https://www.hepsiburada.com",
-    },
-    {
-      store: "Amazon",
-      price: 1349,
-      shipping: 0,
-      inStock: false,
-      url: "https://www.amazon.com.tr",
-    },
-  ];
-
-  let score = 65;
-  score = clamp(Math.round(score), 0, 100);
-
-  return {
-    title,
-    image: "https://dummyimage.com/640x640/111827/ffffff&text=Bikonomi",
-    brand: "LineDeck",
-    category: "Ev & Yaşam / Raf",
-    points: mockPoints,
-    offers,
-    score,
-    updatedAt: new Date().toISOString(),
-  };
+async function fetchAnalyze(u: string, signal?: AbortSignal): Promise<AnalyzeResponse> {
+  const res = await fetch(`/api/analyze?u=${encodeURIComponent(u)}`, { cache: "no-store", signal });
+  if (!res.ok) throw new Error(`analyze_http_${res.status}`);
+  return (await res.json()) as AnalyzeResponse;
 }
 
 export default function CheckClient() {
   const sp = useSearchParams();
-
   const uRaw = sp.get("u") || "";
   const u = useMemo(() => uRaw.trim(), [uRaw]);
 
-  const [manualUrl, setManualUrl] = useState<string>(u);
-  const inputUrl = u || manualUrl;
+  const [data, setData] = useState<AnalyzeResponse | null>(null);
+  const [err, setErr] = useState<string>("");
+  const [loading, setLoading] = useState<boolean>(true);
 
-  const source = useMemo(() => detectSource(inputUrl || ""), [inputUrl]);
-  const base = useMemo(() => makeMockProduct(inputUrl || "https://example.com"), [inputUrl]);
+  const [showBreakdown, setShowBreakdown] = useState(false);
 
-  // live prices
-  const [tyPrice, setTyPrice] = useState<number | null>(null);
-  const [tyLoading, setTyLoading] = useState(false);
+  // tiny toast
+  const [toastMsg, setToastMsg] = useState<string>("");
+  function toast(msg: string) {
+    setToastMsg(msg);
+    window.setTimeout(() => setToastMsg(""), 1600);
+  }
 
-  const [hbPrice, setHbPrice] = useState<number | null>(null);
-  const [hbLoading, setHbLoading] = useState(false);
+  // abort controller ref (re-fetch için)
+  const ctrlRef = useRef<AbortController | null>(null);
 
-  // history
-  const storageKey = useMemo(() => makeHistoryStorageKey(inputUrl || ""), [inputUrl]);
-  const [historyPoints, setHistoryPoints] = useState<Point[]>([]);
-
-  useEffect(() => {
-    if (!inputUrl) return;
-    const pts = readHistory(storageKey);
-    setHistoryPoints(pts);
-  }, [storageKey, inputUrl]);
-
-  // fetch live price
-  useEffect(() => {
-    let cancelled = false;
-
-    async function run() {
-      if (!inputUrl) return;
-
-      if (source !== "trendyol") {
-        setTyPrice(null);
-        setTyLoading(false);
-      }
-      if (source !== "hepsiburada") {
-        setHbPrice(null);
-        setHbLoading(false);
-      }
-
-      if (source === "trendyol") {
-        try {
-          setTyLoading(true);
-          const r = await fetch(`/api/trendyol?u=${encodeURIComponent(inputUrl)}`, { cache: "no-store" });
-          const j = await r.json();
-          if (cancelled) return;
-          if (r.ok && typeof j?.price === "number") setTyPrice(j.price);
-          else setTyPrice(null);
-        } catch {
-          if (!cancelled) setTyPrice(null);
-        } finally {
-          if (!cancelled) setTyLoading(false);
-        }
-      }
-
-      if (source === "hepsiburada") {
-        try {
-          setHbLoading(true);
-          const r = await fetch(`/api/hepsiburada?u=${encodeURIComponent(inputUrl)}`, { cache: "no-store" });
-          const j = await r.json();
-          if (cancelled) return;
-          if (r.ok && typeof j?.price === "number") setHbPrice(j.price);
-          else setHbPrice(null);
-        } catch {
-          if (!cancelled) setHbPrice(null);
-        } finally {
-          if (!cancelled) setHbLoading(false);
-        }
-      }
+  async function load() {
+    if (!u) {
+      setErr("Link bulunamadı. Ana sayfaya dönüp ürün linkini yapıştır.");
+      setLoading(false);
+      return;
     }
 
-    run();
-    return () => {
-      cancelled = true;
-    };
-  }, [inputUrl, source]);
+    ctrlRef.current?.abort();
+    const ctrl = new AbortController();
+    ctrlRef.current = ctrl;
 
-  // offers with live override
-  const offers = useMemo(() => {
-    return base.offers.map((o) => {
-      if (o.store === "Trendyol" && typeof tyPrice === "number") return { ...o, price: tyPrice };
-      if (o.store === "Hepsiburada" && typeof hbPrice === "number") return { ...o, price: hbPrice };
-      return o;
-    });
-  }, [base.offers, tyPrice, hbPrice]);
+    try {
+      setErr("");
+      setLoading(true);
+      const r = await fetchAnalyze(u, ctrl.signal);
+      setData(r);
+    } catch {
+      setErr("Analiz alınamadı. Biraz sonra tekrar dene.");
+      setData(null);
+    } finally {
+      setLoading(false);
+    }
+  }
 
-  // when live comes, save HOURLY history (once per hour)
   useEffect(() => {
-    const live =
-      source === "trendyol" ? tyPrice :
-      source === "hepsiburada" ? hbPrice :
-      null;
+    load();
+    return () => ctrlRef.current?.abort();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [u]);
 
-    if (typeof live !== "number") return;
-    if (!storageKey || storageKey === "bikonomi:hist:unknown") return;
+  // ✅ SSR-safe: window kullanmıyoruz (relative URL yeterli)
+  const sharePath = useMemo(() => {
+    if (!u) return "";
+    return `/check?u=${encodeURIComponent(u)}`;
+  }, [u]);
 
-    setHistoryPoints((prev) => {
-      const next = upsertHourly(prev, live);
-      writeHistory(storageKey, next);
-      return next;
-    });
-  }, [tyPrice, hbPrice, source, storageKey]);
+  async function onShare() {
+    if (!data || !sharePath) return;
+    const text = `Bikonomi: Almadan önce bak. Skor: ${data.score.final}/100 — ${data.score.verdict}`;
 
-  const chartPoints = useMemo(() => {
-    if (historyPoints.length >= 2) return historyPoints.slice(-60);
-    return base.points;
-  }, [historyPoints, base.points]);
+    // ✅ window sadece event içinde, client garantisiyle
+    const absoluteUrl =
+      typeof window !== "undefined" ? `${window.location.origin}${sharePath}` : sharePath;
 
-  const chartMode = historyPoints.length >= 2 ? "gerçek" : "mock";
-  const changePct = useMemo(() => pctChange(chartPoints), [chartPoints]);
-  const path = useMemo(() => simpleSparklinePath(chartPoints), [chartPoints]);
+    try {
+      // @ts-ignore
+      if (navigator.share) {
+        // @ts-ignore
+        await navigator.share({ title: "Bikonomi", text, url: absoluteUrl });
+        return;
+      }
+    } catch {
+      // ignore
+    }
 
-  // cheapest + market + delta
-  const cheapest = useMemo(() => {
-    return offers
-      .filter((o) => o.inStock)
-      .slice()
-      .sort((a, b) => a.price + a.shipping - (b.price + b.shipping))[0];
-  }, [offers]);
+    try {
+      await navigator.clipboard.writeText(absoluteUrl);
+      toast("Link kopyalandı");
+    } catch {
+      toast("Kopyalanamadı");
+    }
+  }
 
-  const marketAvg = useMemo(() => {
-    const inStocks = offers.filter((o) => o.inStock);
-    const sum = inStocks.reduce((s, o) => s + o.price + o.shipping, 0);
-    return sum / Math.max(1, inStocks.length);
-  }, [offers]);
+  const content = (() => {
+    if (loading) {
+      return (
+        <div className="rounded-2xl border border-neutral-200 bg-white p-5">
+          <div className="text-sm text-neutral-500">Fiyatlar ve piyasa kontrol ediliyor…</div>
+        </div>
+      );
+    }
 
-  const deltaPct = useMemo(
-    () => ((cheapest.price + cheapest.shipping - marketAvg) / marketAvg) * 100,
-    [cheapest, marketAvg]
-  );
+    if (err) {
+      return (
+        <div className="rounded-2xl border border-rose-200 bg-rose-50 p-5">
+          <div className="text-sm text-rose-700">{err}</div>
+        </div>
+      );
+    }
 
-  const label = trendLabel(deltaPct);
-  const tone = scoreTone(base.score);
+    if (!data) return null;
 
-  const topBadge = useMemo(() => {
-    if (source === "trendyol") return tyLoading ? "Trendyol Canlı…" : "Trendyol Canlı";
-    if (source === "hepsiburada") return hbLoading ? "Hepsiburada Canlı…" : "Hepsiburada Canlı";
-    return "Mock Modu";
-  }, [source, tyLoading, hbLoading]);
+    const allowManual = data.actions?.allowManual ?? false;
+    const modeMsg =
+      data.mode === "manual_required"
+        ? data.message || "Bu linkten otomatik veri alınamadı."
+        : data.mode === "partial"
+          ? "Kısmi veri bulundu. Gerekirse manuel fiyat ekleyebilirsin."
+          : "";
 
-  // User-friendly chart subtitle (no “mock” word on UI headline)
-  const chartHint = useMemo(() => {
-    if (historyPoints.length === 0) return "Fiyat geçmişin oluşmaya başlayacak (ilk kayıt bekleniyor).";
-    if (historyPoints.length === 1) return "Fiyat geçmişin oluşuyor (birkaç saat içinde ikinci nokta gelir).";
-    return "Fiyat geçmişi";
-  }, [historyPoints.length]);
+    return (
+      <>
+        {/* Sticky Header */}
+        <div className="sticky top-0 z-20 -mx-4 mb-4 border-b border-neutral-200 bg-white/90 px-4 py-3 backdrop-blur">
+          <div className="flex items-center gap-3">
+            <img
+              src={data.product.image}
+              alt={data.product.title}
+              className="h-10 w-10 flex-none rounded-xl border border-neutral-200 object-cover"
+              loading="lazy"
+            />
+            <div className="min-w-0 flex-1">
+              <div className="truncate text-sm font-semibold text-neutral-900">{data.product.title}</div>
+              <div className="text-xs text-neutral-500">Kaynak: {data.product.source}</div>
+            </div>
+
+            <button
+              onClick={onShare}
+              className="rounded-xl border border-neutral-200 bg-white px-3 py-2 text-xs font-medium text-neutral-900 hover:bg-neutral-50"
+              title="Paylaş"
+            >
+              Paylaş
+            </button>
+          </div>
+        </div>
+
+        {modeMsg ? (
+          <div className="mb-4 rounded-2xl border border-neutral-200 bg-neutral-50 p-4 text-sm text-neutral-700">
+            {modeMsg}
+          </div>
+        ) : null}
+
+        {/* Score */}
+        <div className="rounded-2xl border border-neutral-200 bg-white p-5">
+          <div className="flex items-start justify-between gap-4">
+            <div className="min-w-0">
+              <div className="text-sm font-semibold text-neutral-900">Bikonomi Skoru</div>
+              <div className="mt-1 text-sm text-neutral-600">{data.score.summary}</div>
+
+              <button
+                onClick={() => setShowBreakdown((s) => !s)}
+                className="mt-3 text-xs font-medium text-neutral-900 underline decoration-neutral-300 underline-offset-4 hover:decoration-neutral-900"
+              >
+                {showBreakdown ? "Detayları gizle" : "Skor nasıl hesaplandı?"}
+              </button>
+            </div>
+
+            <div className={cx("flex h-16 w-16 flex-none items-center justify-center rounded-2xl border", scoreRing(data.score.final))}>
+              <div className={cx("text-2xl font-extrabold", scoreColor(data.score.final))}>{data.score.final}</div>
+            </div>
+          </div>
+
+          {showBreakdown ? (
+            <div className="mt-4 grid gap-3 sm:grid-cols-2">
+              <BreakRow label="Fiyat avantajı" value={data.score.breakdown.price} max={40} />
+              <BreakRow label="Kargo" value={data.score.breakdown.shipping} max={20} />
+              <BreakRow label="Stok & güven" value={data.score.breakdown.trust} max={20} />
+              <BreakRow label="Piyasa farkı" value={data.score.breakdown.market} max={20} />
+            </div>
+          ) : null}
+
+          <div className="mt-4 text-xs text-neutral-500">
+            Piyasa:{" "}
+            {data.market.avgPrice ? (
+              <>
+                ~{fmtTRY(data.market.avgPrice)} (güven: {Math.round(data.market.confidence * 100)}%, örnek: {data.market.sampleCount})
+              </>
+            ) : (
+              <>Yeterli veri yok</>
+            )}
+          </div>
+        </div>
+
+        {/* Offers table */}
+        <div className="mt-4 rounded-2xl border border-neutral-200 bg-white p-5">
+          <div className="mb-3 text-sm font-semibold text-neutral-900">Karşılaştırma</div>
+
+          {data.offers?.length ? (
+            <OfferTable offers={data.offers} />
+          ) : (
+            <div className="text-sm text-neutral-600">Şu an otomatik teklif bulunamadı.</div>
+          )}
+        </div>
+
+        {/* Other stores search */}
+        <div className="mt-4 rounded-2xl border border-neutral-200 bg-white p-5">
+          <div className="mb-3 text-sm font-semibold text-neutral-900">Diğer mağazalarda ara</div>
+          <SearchLinks links={data.actions.searchLinks} />
+          <div className="mt-3 text-xs text-neutral-500">Eşleme yokken bile tek tıkla arayabilirsin.</div>
+        </div>
+
+        {/* Manual contribution */}
+        {allowManual ? (
+          <div className="mt-4 rounded-2xl border border-neutral-200 bg-white p-5">
+            <div className="mb-2 text-sm font-semibold text-neutral-900">Fiyat gördüysen ekle</div>
+            <div className="mb-3 text-xs text-neutral-500">1 fiyat gir, 100 kişiye yardım et.</div>
+
+            <ManualBox
+              productKey={data.product.productKey}
+              defaultStore={data.product.source}
+              onDone={async () => {
+                toast("Kaydedildi, güncelliyorum…");
+                await load();
+                toast("Güncellendi");
+              }}
+            />
+          </div>
+        ) : null}
+
+        {/* Trust footer */}
+        <div className="mt-6 rounded-2xl border border-neutral-200 bg-neutral-50 p-5 text-xs text-neutral-600">
+          <div>Bikonomi farklı kaynaklardan veri toplar.</div>
+          <div>Reklam değil, analiz.</div>
+          <div>Son karar kullanıcıya aittir.</div>
+        </div>
+      </>
+    );
+  })();
 
   return (
-    <main className="min-h-screen bg-[#0b1020] text-slate-100">
-      {/* Top bar */}
-      <div className="sticky top-0 z-40 border-b border-white/10 bg-[#0b1020]/80 backdrop-blur">
-        <div className="mx-auto flex w-full max-w-5xl items-center justify-between px-4 py-3">
-          <div className="flex items-center gap-3">
-            <div className="grid h-9 w-9 place-items-center rounded-xl bg-white/10 ring-1 ring-white/10">
-              <div className="h-4 w-5">
-                <div className="h-[3px] w-full rounded bg-white/90" />
-                <div className="mt-[5px] h-[3px] w-4/5 rounded bg-white/90" />
-                <div className="mt-[5px] h-[3px] w-3/5 rounded bg-white/90" />
-              </div>
-            </div>
-            <div className="leading-tight">
-              <div className="text-sm font-semibold">Bikonomi</div>
-              <div className="text-xs text-slate-300">Ürün Analizi</div>
+    <div className="mx-auto max-w-2xl px-4 pb-10 pt-4">
+      {content}
+
+      {toastMsg ? (
+        <div className="fixed bottom-4 left-1/2 z-50 -translate-x-1/2 rounded-full bg-neutral-900 px-4 py-2 text-xs font-medium text-white shadow">
+          {toastMsg}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function BreakRow(props: { label: string; value: number; max: number }) {
+  const pct = Math.round((props.value / props.max) * 100);
+  return (
+    <div className="rounded-xl border border-neutral-200 p-3">
+      <div className="flex items-center justify-between text-xs">
+        <span className="font-medium text-neutral-900">{props.label}</span>
+        <span className="text-neutral-600">
+          {props.value}/{props.max}
+        </span>
+      </div>
+      <div className="mt-2 h-2 w-full rounded-full bg-neutral-100">
+        <div className="h-2 rounded-full bg-neutral-900" style={{ width: `${Math.max(0, Math.min(100, pct))}%` }} />
+      </div>
+    </div>
+  );
+}
+
+function OfferTable({ offers }: { offers: AnalyzeResponse["offers"] }) {
+  const sorted = [...offers].sort((a, b) => {
+    const rank = (v: OfferVerdict) => (v === "Mantıklı" ? 0 : v === "Olur" ? 1 : 2);
+    const r = rank(a.verdict) - rank(b.verdict);
+    if (r !== 0) return r;
+    return (a.total || 0) - (b.total || 0);
+  });
+
+  return (
+    <div className="overflow-hidden rounded-xl border border-neutral-200">
+      <div className="grid grid-cols-12 bg-neutral-50 px-3 py-2 text-[11px] font-semibold text-neutral-600">
+        <div className="col-span-4">Mağaza</div>
+        <div className="col-span-3 text-right">Fiyat</div>
+        <div className="col-span-3 text-right">Kargo</div>
+        <div className="col-span-2 text-right">Toplam</div>
+      </div>
+
+      {sorted.map((o, i) => (
+        <a
+          key={`${o.store}-${i}`}
+          href={o.url}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="grid grid-cols-12 items-center gap-0 border-t border-neutral-200 px-3 py-3 hover:bg-neutral-50"
+        >
+          <div className="col-span-4 min-w-0">
+            <div className="flex items-center gap-2">
+              <span className={cx("inline-flex items-center rounded-full border px-2 py-1 text-[11px] font-semibold", badgeByOfferVerdict(o.verdict))}>
+                {o.verdict}
+              </span>
+              <span className="truncate text-sm font-medium text-neutral-900">{o.store}</span>
             </div>
           </div>
 
-          <span className="hidden sm:inline-flex items-center gap-2 rounded-full bg-white/5 px-3 py-1 text-xs text-slate-200 ring-1 ring-white/10">
-            {topBadge}
-            <span className={`h-1.5 w-1.5 rounded-full ${source === "unknown" ? "bg-slate-400" : "bg-emerald-400"}`} />
-          </span>
-        </div>
+          <div className="col-span-3 text-right text-sm text-neutral-900">{fmtTRY(o.price || 0)}</div>
+          <div className="col-span-3 text-right text-sm text-neutral-900">{fmtTRY(o.shipping || 0)}</div>
+          <div className="col-span-2 text-right text-sm font-semibold text-neutral-900">{fmtTRY(o.total || 0)}</div>
+        </a>
+      ))}
+    </div>
+  );
+}
+
+function SearchLinks({ links }: { links: Array<{ store: string; url: string }> }) {
+  return (
+    <div className="flex flex-wrap gap-2">
+      {links.map((l) => (
+        <a
+          key={l.store}
+          href={l.url}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="rounded-xl border border-neutral-200 bg-white px-3 py-2 text-xs font-medium text-neutral-900 hover:bg-neutral-50"
+        >
+          {l.store}’da Ara
+        </a>
+      ))}
+    </div>
+  );
+}
+
+function ManualBox(props: { productKey: string; defaultStore: string; onDone: () => void | Promise<void> }) {
+  const [store, setStore] = useState(props.defaultStore);
+  const [price, setPrice] = useState<string>("");
+  const [shipping, setShipping] = useState<string>("0");
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState("");
+
+  async function submit() {
+    const p = Number(price);
+    const s = Number(shipping || 0);
+    if (!Number.isFinite(p) || p <= 0) {
+      setMsg("Fiyat gir.");
+      return;
+    }
+
+    setBusy(true);
+    setMsg("");
+    try {
+      const res = await fetch("/api/contribute", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          productKey: props.productKey,
+          store,
+          price: Math.round(p),
+          shipping: Math.max(0, Math.round(s)),
+        }),
+      });
+
+      if (!res.ok) throw new Error("contrib_failed");
+
+      setPrice("");
+      setShipping("0");
+      setMsg("Teşekkürler!");
+      await props.onDone();
+    } catch {
+      setMsg("Kaydedilemedi. Tekrar dene.");
+    } finally {
+      setBusy(false);
+      window.setTimeout(() => setMsg(""), 1400);
+    }
+  }
+
+  return (
+    <div className="grid gap-3">
+      <div className="grid gap-2 sm:grid-cols-3">
+        <select
+          value={store}
+          onChange={(e) => setStore(e.target.value)}
+          className="rounded-xl border border-neutral-200 bg-white px-3 py-2 text-sm"
+        >
+          <option value="Trendyol">Trendyol</option>
+          <option value="Hepsiburada">Hepsiburada</option>
+          <option value="Amazon">Amazon</option>
+          <option value="Diğer">Diğer</option>
+        </select>
+
+        <input
+          value={price}
+          onChange={(e) => setPrice(e.target.value)}
+          inputMode="numeric"
+          placeholder="Fiyat (₺)"
+          className="rounded-xl border border-neutral-200 bg-white px-3 py-2 text-sm"
+        />
+
+        <input
+          value={shipping}
+          onChange={(e) => setShipping(e.target.value)}
+          inputMode="numeric"
+          placeholder="Kargo (₺)"
+          className="rounded-xl border border-neutral-200 bg-white px-3 py-2 text-sm"
+        />
       </div>
 
-      <div className="mx-auto w-full max-w-5xl px-4 py-5 sm:py-8">
-        {/* URL input */}
-        <div className="mb-5 rounded-2xl bg-white/5 p-3 ring-1 ring-white/10 sm:mb-7 sm:p-4">
-          <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-            <div className="text-sm text-slate-200 sm:min-w-32">Ürün linki</div>
-            <div className="flex-1">
-              <input
-                value={manualUrl}
-                onChange={(e) => setManualUrl(e.target.value)}
-                placeholder="Linki yapıştır (Trendyol / Hepsiburada)"
-                className="w-full rounded-xl bg-[#0b1020]/60 px-4 py-3 text-sm text-slate-100 ring-1 ring-white/10 outline-none placeholder:text-slate-400 focus:ring-2 focus:ring-white/20"
-              />
-              <div className="mt-2 text-xs text-slate-400">
-                Fiyat geçmişi otomatik birikir: <span className="text-slate-200">saatte 1 nokta</span>. (DB yok, risk yok)
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <div className="grid grid-cols-1 gap-5 lg:grid-cols-[1.2fr_.8fr] lg:gap-6">
-          {/* Left */}
-          <section className="space-y-5">
-            <div className="rounded-3xl bg-white/5 p-4 ring-1 ring-white/10 sm:p-5">
-              <div className="flex flex-col gap-4 sm:flex-row sm:items-start">
-                <div className="relative w-full overflow-hidden rounded-2xl bg-black/20 ring-1 ring-white/10 sm:h-36 sm:w-36">
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img src={base.image} alt={base.title} className="h-44 w-full object-cover sm:h-36" loading="lazy" />
-                  <div className="absolute left-2 top-2 rounded-full bg-black/40 px-2 py-1 text-[11px] text-slate-100 ring-1 ring-white/10">
-                    {base.category}
-                  </div>
-                </div>
-
-                <div className="flex-1">
-                  <div className="flex flex-wrap items-start justify-between gap-3">
-                    <div>
-                      <h1 className="text-base font-semibold leading-snug sm:text-lg">{base.title}</h1>
-                      <div className="mt-1 text-sm text-slate-300">
-                        Marka: <span className="text-slate-200">{base.brand}</span>
-                      </div>
-                    </div>
-
-                    <div className={`shrink-0 rounded-2xl ${tone.bg} px-4 py-3 ring-1 ${tone.ring}`}>
-                      <div className="flex items-center gap-3">
-                        <div className="grid h-12 w-12 place-items-center rounded-2xl bg-white/5 ring-1 ring-white/10">
-                          <div className="text-[26px] leading-none font-extrabold">{base.score}</div>
-                        </div>
-                        <div className="min-w-44">
-                          <div className={`text-sm font-semibold ${tone.text}`}>{tone.label}</div>
-                          <div className="text-xs text-slate-300">Bikonomi Skoru</div>
-                          <div className="mt-1 text-[11px] text-slate-200/80">{tone.hint}</div>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="mt-4 flex flex-wrap items-center gap-2">
-                    <span className={`inline-flex items-center rounded-full px-3 py-1 text-xs ${label.cls}`}>{label.t}</span>
-                    <span className="text-xs text-slate-400">
-                      Piyasa ort.: <span className="text-slate-200">{fmtTL(marketAvg)}</span>
-                    </span>
-                    <span className="text-xs text-slate-400">
-                      Fark:{" "}
-                      <span className="text-slate-200">
-                        {deltaPct >= 0 ? "+" : ""}
-                        {deltaPct.toFixed(1)}%
-                      </span>
-                    </span>
-                  </div>
-
-                  <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-3">
-                    <div className="rounded-2xl bg-black/20 p-3 ring-1 ring-white/10">
-                      <div className="text-xs text-slate-400">En ucuz mağaza</div>
-                      <div className="mt-1 text-sm font-semibold">{cheapest.store}</div>
-                    </div>
-                    <div className="rounded-2xl bg-black/20 p-3 ring-1 ring-white/10">
-                      <div className="text-xs text-slate-400">Toplam fiyat</div>
-                      <div className="mt-1 text-sm font-semibold">{fmtTL(cheapest.price + cheapest.shipping)}</div>
-                      <div className="mt-1 text-[11px] text-slate-400">
-                        {cheapest.shipping === 0 ? "Kargo dahil" : `Kargo: ${fmtTL(cheapest.shipping)}`}
-                      </div>
-                    </div>
-                    <div className="rounded-2xl bg-black/20 p-3 ring-1 ring-white/10">
-                      <div className="text-xs text-slate-400">Stok</div>
-                      <div className="mt-1 text-sm font-semibold">{cheapest.inStock ? "Stokta" : "Stok yok"}</div>
-                      <div className="mt-1 text-[11px] text-slate-400">
-                        Güncellendi: {new Date(base.updatedAt).toLocaleString("tr-TR")}
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            {/* Chart */}
-            <div className="rounded-3xl bg-white/5 p-4 ring-1 ring-white/10 sm:p-5">
-              <div className="flex flex-wrap items-end justify-between gap-3">
-                <div>
-                  <div className="text-sm font-semibold">Fiyat Geçmişi</div>
-                  <div className="mt-1 text-xs text-slate-400">
-                    {chartHint} · Nokta: <span className="text-slate-200">{chartPoints.length}</span>
-                    <span className="ml-2 text-slate-500">({chartMode})</span>
-                  </div>
-                </div>
-                <div className="text-xs text-slate-300">
-                  Değişim:{" "}
-                  <span className="text-slate-100">
-                    {changePct >= 0 ? "+" : ""}
-                    {changePct.toFixed(1)}%
-                  </span>
-                </div>
-              </div>
-
-              <div className="mt-4 overflow-hidden rounded-2xl bg-[#0b1020]/60 ring-1 ring-white/10">
-                <svg viewBox="0 0 720 180" className="h-44 w-full">
-                  <g opacity="0.25">
-                    {[30, 60, 90, 120, 150].map((y) => (
-                      <line key={y} x1="0" x2="720" y1={y} y2={y} stroke="white" strokeWidth="1" />
-                    ))}
-                  </g>
-                  <path d={path} fill="none" stroke="white" strokeWidth="3" opacity="0.85" />
-                </svg>
-              </div>
-
-              <div className="mt-3 flex flex-wrap gap-2">
-                {chartPoints.slice(-10).map((pt, idx) => (
-                  <span
-                    key={`${pt.d}-${idx}`}
-                    className="inline-flex items-center gap-2 rounded-full bg-white/5 px-3 py-1 text-xs text-slate-200 ring-1 ring-white/10"
-                  >
-                    <span className="text-slate-400">{pt.d}</span>
-                    <span className="font-semibold">{fmtTL(pt.p)}</span>
-                  </span>
-                ))}
-              </div>
-            </div>
-          </section>
-
-          {/* Right */}
-          <aside className="space-y-5">
-            <div className="rounded-3xl bg-gradient-to-br from-white/10 to-white/5 p-5 ring-1 ring-white/10">
-              <div className="text-xs text-slate-300">Sponsor Alanı</div>
-              <div className="mt-2 text-lg font-semibold leading-snug">Buraya reklam / kampanya alanı</div>
-              <div className="mt-2 text-sm text-slate-300">(MVP’de boş duracak, ama yerini şimdiden kilitliyoruz.)</div>
-              <div className="mt-4 inline-flex items-center rounded-full bg-black/20 px-3 py-1 text-xs text-slate-200 ring-1 ring-white/10">
-                728×90 / 300×250 uyumlu
-              </div>
-            </div>
-
-            <div className="rounded-3xl bg-white/5 p-4 ring-1 ring-white/10 sm:p-5">
-              <div className="flex items-end justify-between gap-3">
-                <div>
-                  <div className="text-sm font-semibold">Mağaza Karşılaştırması</div>
-                  <div className="mt-1 text-xs text-slate-400">Toplam fiyata göre</div>
-                </div>
-                <div className="text-xs text-slate-300">
-                  Sıralama: <span className="text-slate-100">En ucuz →</span>
-                </div>
-              </div>
-
-              <div className="mt-4 space-y-3">
-                {offers
-                  .slice()
-                  .sort((a, b) => a.price + a.shipping - (b.price + b.shipping))
-                  .map((o) => {
-                    const total = o.price + o.shipping;
-                    const isBest = o.store === cheapest.store && o.inStock;
-                    const canGo = isBest && !!o.url;
-
-                    return (
-                      <div
-                        key={o.store}
-                        className={`rounded-2xl p-4 ring-1 ${
-                          isBest ? "bg-emerald-500/10 ring-emerald-400/40" : "bg-black/20 ring-white/10"
-                        }`}
-                      >
-                        <div className="flex items-start justify-between gap-3">
-                          <div>
-                            <div className="flex items-center gap-2">
-                              <div className="text-sm font-semibold">{o.store}</div>
-                              {isBest && (
-                                <>
-                                  <span className="rounded-full bg-emerald-500/20 px-2 py-0.5 text-[11px] text-emerald-200 ring-1 ring-emerald-400/30">
-                                    En ucuz
-                                  </span>
-                                  <span className="rounded-full bg-emerald-500 px-2.5 py-0.5 text-[11px] font-semibold text-black shadow-sm">
-                                    Önerilen
-                                  </span>
-                                </>
-                              )}
-                              {!o.inStock && (
-                                <span className="rounded-full bg-rose-500/20 px-2 py-0.5 text-[11px] text-rose-200 ring-1 ring-rose-400/30">
-                                  Stok yok
-                                </span>
-                              )}
-                            </div>
-
-                            <div className="mt-1 text-xs text-slate-400">
-                              Fiyat: <span className="text-slate-200">{fmtTL(o.price)}</span> · Kargo:{" "}
-                              <span className="text-slate-200">{o.shipping === 0 ? "Dahil" : fmtTL(o.shipping)}</span>
-                            </div>
-                          </div>
-
-                          <div className="text-right">
-                            <div className="text-xs text-slate-400">Toplam</div>
-                            <div className="text-base font-semibold">{fmtTL(total)}</div>
-                          </div>
-                        </div>
-
-                        {canGo ? (
-                          <>
-                            <a
-                              href={o.url}
-                              target="_blank"
-                              rel="noreferrer"
-                              className="mt-3 block w-full rounded-xl bg-white px-4 py-2.5 text-center text-sm font-semibold text-black ring-1 ring-white/20 transition hover:bg-white/90"
-                            >
-                              Mağazaya git
-                            </a>
-
-                            <div className="mt-2 flex items-center gap-2 text-[11px] text-slate-300">
-                              <span className="inline-block h-1.5 w-1.5 rounded-full bg-emerald-400" />
-                              Bikonomi bu mağazayı, toplam fiyata göre daha avantajlı buldu.
-                            </div>
-                          </>
-                        ) : (
-                          <button
-                            disabled
-                            className="mt-3 w-full cursor-not-allowed rounded-xl bg-white/10 px-4 py-2.5 text-sm font-semibold text-slate-400 ring-1 ring-white/10"
-                            title="Şimdilik sadece en ucuz mağaza aktif"
-                          >
-                            Mağazaya git
-                          </button>
-                        )}
-                      </div>
-                    );
-                  })}
-              </div>
-
-              <div className="mt-4 text-[11px] text-slate-400">
-                Şimdilik yalnızca <span className="text-slate-200">en ucuz</span> mağaza aktif. (MVP kontrolü)
-              </div>
-            </div>
-          </aside>
-        </div>
-
-        <div className="mt-10 pb-10 text-center text-xs text-slate-500">© {new Date().getFullYear()} Bikonomi · MVP</div>
+      <div className="flex items-center gap-3">
+        <button
+          onClick={submit}
+          disabled={busy}
+          className={cx(
+            "rounded-xl px-4 py-2 text-sm font-semibold text-white",
+            busy ? "bg-neutral-400" : "bg-neutral-900 hover:bg-neutral-800"
+          )}
+        >
+          {busy ? "Gönderiliyor…" : "Gönder"}
+        </button>
+        {msg ? <div className="text-xs text-neutral-600">{msg}</div> : null}
       </div>
-    </main>
+    </div>
   );
 }

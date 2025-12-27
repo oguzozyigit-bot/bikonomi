@@ -19,7 +19,10 @@ type FetchOut = {
 };
 
 function json(out: FetchOut, status = 200) {
-  return NextResponse.json(out, { status, headers: { "cache-control": "no-store" } });
+  return NextResponse.json(out, {
+    status,
+    headers: { "cache-control": "no-store" },
+  });
 }
 
 function safeUrl(raw: string): URL | null {
@@ -88,7 +91,8 @@ function detectCurrency(htmlOrText: string): Currency {
 
 function extractJsonLd(html: string): any[] {
   const out: any[] = [];
-  const re = /<script[^>]+type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi;
+  const re =
+    /<script[^>]+type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi;
   let m: RegExpExecArray | null;
   while ((m = re.exec(html))) {
     const raw = (m[1] || "").trim();
@@ -157,7 +161,8 @@ function extractFromJsonLd(html: string) {
 
     const ar = product.aggregateRating;
     if (ar && typeof ar === "object") {
-      if (ar.ratingValue != null) rating = rating ?? parseNumberLike(String(ar.ratingValue));
+      if (ar.ratingValue != null)
+        rating = rating ?? parseNumberLike(String(ar.ratingValue));
       const rc = ar.ratingCount ?? ar.reviewCount;
       if (rc != null) ratingCount = ratingCount ?? parseNumberLike(String(rc));
     }
@@ -206,14 +211,19 @@ function extractFromHtmlHeuristics(html: string) {
   const price = finalPriceStr ? parseNumberLike(finalPriceStr) : null;
   const currency = detectCurrency(finalPriceStr || html);
 
+  // ❌ ES2018 named groups yok -> ✅ klasik capture group
   const rv =
-    html.match(/"ratingValue"\s*:\s*"?(?<v>\d+(?:[.,]\d+)?)"?/i)?.groups?.v ??
-    html.match(/ratingValue["']?\s*content=["'](?<v>\d+(?:[.,]\d+)?)["']/i)?.groups?.v ??
+    html.match(/"ratingValue"\s*:\s*"?(\\d+(?:[.,]\\d+)?)"?/i)?.[1] ??
+    html.match(/ratingValue["']?\s*content=["'](\\d+(?:[.,]\\d+)?)["']/i)?.[1] ??
     null;
 
   const rating = rv ? parseNumberLike(rv) : null;
 
-  const rc = html.match(/"(ratingCount|reviewCount)"\s*:\s*"?(?<n>\d{1,9})"?/i)?.groups?.n ?? null;
+  // ❌ ES2018 named groups yok -> ✅ klasik capture group
+  const rc =
+    html.match(/"(ratingCount|reviewCount)"\s*:\s*"?(\\d{1,9})"?/i)?.[2] ??
+    null;
+
   const ratingCount = rc ? parseNumberLike(rc) : null;
 
   return { title, price, currency, rating, ratingCount };
@@ -366,7 +376,9 @@ export async function GET(req: Request) {
     null;
 
   const currency: Currency =
-    fromLd.currency ?? (fromHtml.currency as Currency) ?? (price != null ? "TRY" : null);
+    fromLd.currency ??
+    (fromHtml.currency as Currency) ??
+    (price != null ? "TRY" : null);
 
   const rating = fromLd.rating ?? fromHtml.rating ?? null;
   const ratingCount = fromLd.ratingCount ?? fromHtml.ratingCount ?? null;

@@ -1,15 +1,17 @@
+// src/lib/normalizeFromUrl.ts
 import { normalizeUrl } from "@/lib/normalizeUrl";
-import { fetchBySource } from "@/lib/sources";
+import { fetchSource } from "@/lib/fetchSource";
 
 export async function normalizeFromUrl(url: string) {
-  const { source, clean } = normalizeUrl(url);
+  const { source, cleanUrl, productKey } = normalizeUrl(url);
 
-  const res = await fetchBySource(source as any, clean);
+  // fetchSource cleanUrl + source bekliyor (projendeki analiz route ile aynı)
+  const fetched = await fetchSource(cleanUrl, source);
 
   return {
+    productKey,
     source,
-    clean,
-    product: res.product,
-    debug: res.debug,
+    cleanUrl,
+    ...fetched,
   };
 }

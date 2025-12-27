@@ -1,172 +1,230 @@
 ﻿// src/app/api/analyze/route.ts
+import { prisma } from "@/lib/prisma";
+import { NextResponse } from "next/server";
+
+import { normalizeUrl } from "@/lib/normalizeUrl";
+import { getFromCache, setToCache } from "@/lib/cache";
+import { fetchSource } from "@/lib/fetchSource";
+import { buildProductMeta } from "@/lib/productMeta";
+import { computeMarket } from "@/lib/market";
+import { computeScore, computeOfferVerdict } from "@/lib/score";
+import { buildSearchLinks } from "@/lib/searchLinks";
+
+import type { AnalyzeResponse, Offer, Source } from "@/lib/types";
+
 export const runtime = "nodejs";
 
-import { NextResponse } from "next/server";
-import { normalizeUrl } from "@/lib/normalizeUrl";
-import { fetchTrendyolProduct } from "@/lib/sources/trendyol";
-import { appendPrice, getHistory } from "@/lib/historyStore";
-import { computeBikonomiScore, Offer } from "@/lib/score";
-import crypto from "crypto";
+const FALLBACK_IMAGE =
+  "https://dummyimage.com/600x600/111827/ffffff&text=Bikonomi";
 
-const BUILD_ID = "ANALYZE_ROUTE_V8_MANUAL_PRICE_FINAL";
-
-function hashId(input: string) {
-  return crypto.createHash("sha1").update(input).digest("hex").slice(0, 16);
+function failSoftResponse(params: {
+  message: string;
+  source?: Source;
+  productKey?: string;
+  title?: string;
+  image?: string;
+  allowManual?: boolean;
+}): AnalyzeResponse {
+  const title = params.title || "Ürün";
+  const image = params.image || FALLBACK_IMAGE;
+  return {
+    ok: true, // ✅ 500 yok: her zaman JSON
+    mode: "manual_required",
+    message: params.message,
+    product: {
+      productKey: params.productKey || "unknown:product",
+      source: params.source || "Other",
+      title,
+      image,
+    },
+    market: { avgPrice: null, confidence: 0, sampleCount: 0 },
+    score: {
+      final: 60,
+      verdict: "Düşünülebilir",
+      summary: "Fiyat makul, alternatifler kontrol edilebilir.",
+      breakdown: { price: 20, shipping: 14, trust: 16, market: 10 },
+    },
+    offers: [],
+    actions: {
+      allowManual: params.allowManual ?? true,
+      searchLinks: buildSearchLinks(title),
+    },
+  };
 }
 
-function parseManualPrice(raw: string | null): number {
-  if (!raw) return 0;
-  const cleaned = raw.replace(/\s+/g, "").replace(/\./g, "").replace(",", ".");
-  const n = Number(cleaned);
-  return Number.isFinite(n) ? n : 0;
-}
+// ✅ Her analizde offer bazlı PricePoint yaz
+async function writePricePoints(productKey: string, offers: Offer[]) {
+  if (!productKey || !offers?.length) return;
 
-type HistoryPoint = { date: string; price: number };
+  const cleanOffers = offers.filter(
+    (o) => Number(o.price ?? 0) + Number(o.shipping ?? 0) > 0
+  );
+  if (!cleanOffers.length) return;
 
-function coerceHistoryPoints(historyRaw: any): HistoryPoint[] {
-  const arr = Array.isArray(historyRaw)
-    ? historyRaw
-    : Array.isArray(historyRaw?.points)
-      ? historyRaw.points
-      : [];
-
-  return arr
-    .filter(Boolean)
-    .map((x: any) => ({
-      date: String(x.date ?? x.createdAt ?? x.t ?? ""),
-      price: Number(x.price ?? x.value ?? x.p ?? 0),
-    }))
-    .filter((x: HistoryPoint) => Boolean(x.date) && Number.isFinite(x.price));
+  await prisma.pricePoint.createMany({
+    data: cleanOffers.map((o) => ({
+      productKey,
+      store: String((o as any).store ?? (o as any).source ?? "Unknown"),
+      price: Math.round(Number(o.price ?? 0)),
+      shipping: Math.round(Number(o.shipping ?? 0)),
+      inStock: o.inStock === undefined ? true : Boolean(o.inStock),
+      url: (o as any).url ?? null, // ✅ sade: string | null
+    })),
+    skipDuplicates: false,
+  });
 }
 
 export async function GET(req: Request) {
   try {
     const { searchParams } = new URL(req.url);
+    const raw = (searchParams.get("u") || "").trim();
 
-    const rawUrl = (searchParams.get("u") || "").trim();
-    const rawPrice = (searchParams.get("p") || "").trim();
-
-    if (!rawUrl) {
-      return NextResponse.json({ error: "URL gerekli", buildId: BUILD_ID }, { status: 400 });
-    }
-
-    const manualPrice = parseManualPrice(rawPrice);
-
-    let source: string, clean: string;
+    // 1) URL normalize
+    let normalized: { productKey: string; source: Source; cleanUrl: string };
     try {
-      const norm = normalizeUrl(rawUrl);
-      source = norm.source;
-      clean = norm.clean;
+      normalized = normalizeUrl(raw);
     } catch {
-      return NextResponse.json({ error: "Geçersiz URL", buildId: BUILD_ID }, { status: 400 });
+      return NextResponse.json(
+        failSoftResponse({ message: "Geçersiz link." }),
+        { status: 200 }
+      );
     }
 
-    const productId = hashId(clean);
+    const { productKey, source, cleanUrl } = normalized;
 
-    let title = "Ürün";
-    let image = "https://dummyimage.com/600x600/111827/ffffff&text=Bikonomi";
+    // 2) Cache read (fail-soft)
+    try {
+      const cached = await getFromCache(productKey);
+      if (cached) return NextResponse.json(cached, { status: 200 });
+    } catch (e) {
+      console.error("CACHE READ ERROR:", e);
+    }
+
+    // 3) Meta (fail-soft)
+    let meta = { title: "Ürün", image: FALLBACK_IMAGE };
+    try {
+      meta = await buildProductMeta(cleanUrl, source);
+    } catch (e) {
+      console.error("META ERROR:", e);
+    }
+
+    // 4) Offers (fail-soft)
     let offers: Offer[] = [];
-
-    // 1) Trendyol otomatik deneme (başarısız olabilir)
-    if (source === "trendyol") {
-      try {
-        const p = await fetchTrendyolProduct(clean);
-        title = p.title || title;
-        image = p.image || image;
-
-        if (p.price && p.price > 0) {
-          offers = [
-            {
-              store: "Trendyol",
-              price: p.price,
-              shipping: p.shipping ?? 0,
-              inStock: p.inStock ?? true,
-              url: clean,
-            },
-          ];
-        }
-      } catch {
-        // sessiz geç → manuel fallback'e düş
+    let mode: "auto" | "partial" | "manual_required" = "manual_required";
+    try {
+      const fetched = await fetchSource(cleanUrl, source);
+      if (fetched?.offers?.length) {
+        offers = fetched.offers;
+        mode = "auto";
+      } else {
+        mode = "partial";
+        offers = [];
       }
+    } catch (e) {
+      console.error("FETCH SOURCE ERROR:", e);
+      mode = "manual_required";
+      offers = [];
     }
 
-    // 2) Manuel fiyat fallback (kritik)
-    if (!offers.length && manualPrice > 0) {
-      offers = [
-        {
-          store: "Trendyol",
-          price: manualPrice,
-          shipping: 0,
-          inStock: true,
-          url: clean,
-        },
-      ];
-    }
-
-    if (!Array.isArray(offers)) {
+    // 5) Market (DB patlasa bile 500 yok)
+    let market = { avgPrice: null, confidence: 0, sampleCount: 0 };
+    try {
+      market = await computeMarket(productKey);
+    } catch (e) {
+      console.error("MARKET/DB ERROR:", e);
       return NextResponse.json(
-        { error: "Sunucu iç hatası", detail: "Offers üretilemedi", buildId: BUILD_ID },
-        { status: 500 }
-      );
-    }
-
-    if (!offers.length) {
-      return NextResponse.json(
-        {
-          error: "Kaynak verisi alınamadı",
-          detail: "Otomatik veri alınamadı ve manuel fiyat da algılanmadı.",
+        failSoftResponse({
+          message:
+            "Veritabanı bağlantısı geçici olarak sorunlu. Manuel fiyat ekleyebilirsin.",
           source,
-          buildId: BUILD_ID,
-          debug: { rawPrice, manualPrice },
-        },
-        { status: 502 }
+          productKey,
+          title: meta.title,
+          image: meta.image,
+          allowManual: true,
+        }),
+        { status: 200 }
       );
     }
 
-    // 3) History + score
-    const cheapestTotal = offers
-      .filter((o) => o.inStock)
-      .reduce((m, o) => Math.min(m, o.price + (o.shipping || 0)), Infinity);
+    const marketAvg = market.avgPrice ?? null;
 
-    if (Number.isFinite(cheapestTotal) && cheapestTotal > 0) {
-      await appendPrice(productId, cheapestTotal);
+    // 6) offers: total + verdict
+    const bestTotal =
+      offers.length > 0
+        ? Math.min(
+            ...offers
+              .map((o) => (o.price || 0) + (o.shipping || 0))
+              .filter((t) => t > 0)
+          )
+        : null;
+
+    try {
+      offers = offers.map((o) => {
+        const total = (o.price || 0) + (o.shipping || 0);
+        const verdict = computeOfferVerdict({
+          offer: { ...o, total } as any,
+          marketAvg,
+          bestTotal,
+        });
+        return { ...o, total, verdict } as any;
+      });
+    } catch (e) {
+      console.error("OFFER VERDICT ERROR:", e);
     }
 
-    const historyRaw = await getHistory(productId);
-    const historyPoints = coerceHistoryPoints(historyRaw);
-
-    const scorePack = computeBikonomiScore({
-      offers,
-      history: historyPoints,
-    });
-
-    return NextResponse.json(
-      {
-        buildId: BUILD_ID,
-        productId,
-        source,
-        cleanUrl: clean,
-        title,
-        image,
-        offers,
-        history: historyPoints,
-        manualPriceUsed: manualPrice > 0,
-        ...scorePack,
-      },
-      {
-        headers: {
-          "Cache-Control": "no-store, max-age=0",
-        },
+    // 7) ✅ PricePoint write (fail-soft)
+    try {
+      if ((mode === "auto" || mode === "partial") && offers.length > 0) {
+        await writePricePoints(productKey, offers);
       }
-    );
-  } catch (e: any) {
-    return NextResponse.json(
-      {
-        error: "Sunucu hatası",
-        detail: e?.message || String(e),
-        buildId: BUILD_ID,
+    } catch (e) {
+      console.error("PRICEPOINT WRITE ERROR:", e);
+    }
+
+    // 8) score (her koşulda)
+    let score: AnalyzeResponse["score"];
+    try {
+      score = computeScore({ offers, market }) as any;
+    } catch (e) {
+      console.error("SCORE ERROR:", e);
+      score = {
+        final: 60,
+        verdict: "Düşünülebilir",
+        summary: "Fiyat makul, alternatifler kontrol edilebilir.",
+        breakdown: { price: 20, shipping: 14, trust: 16, market: 10 },
+      };
+    }
+
+    const resp: AnalyzeResponse = {
+      ok: true,
+      mode,
+      product: { productKey, source, title: meta.title, image: meta.image },
+      market,
+      score,
+      offers,
+      actions: {
+        allowManual: mode !== "auto",
+        searchLinks: buildSearchLinks(meta.title),
       },
-      { status: 500 }
+      message:
+        mode === "manual_required"
+          ? "Bu linkten otomatik veri alınamadı."
+          : undefined,
+    };
+
+    // 9) Cache write (fail-soft)
+    try {
+      await setToCache(productKey, resp);
+    } catch (e) {
+      console.error("CACHE WRITE ERROR:", e);
+    }
+
+    return NextResponse.json(resp, { status: 200 });
+  } catch (e) {
+    console.error("ANALYZE FATAL ERROR:", e);
+    return NextResponse.json(
+      failSoftResponse({ message: "Analiz alınamadı. Biraz sonra tekrar dene." }),
+      { status: 200 }
     );
   }
 }

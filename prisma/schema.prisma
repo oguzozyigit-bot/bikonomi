@@ -1,8 +1,23 @@
 datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_DATABASE_URL")
 }
 
 generator client {
   provider = "prisma-client-js"
+}
+
+model PricePoint {
+  id         String   @id @default(cuid())
+  productKey String
+  store      String
+  price      Int
+  shipping   Int      @default(0)
+  inStock    Boolean  @default(true)
+  url        String?
+  createdAt  DateTime @default(now())
+
+  @@index([productKey, createdAt])
+  @@index([productKey, store, createdAt])
 }
