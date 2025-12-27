@@ -129,7 +129,6 @@ function makeMockProduct(inputUrl: string) {
       price: 1249,
       shipping: 0,
       inStock: true,
-      // Trendyol linki geldiyse onu kullan, değilse trendyo ana sayfa
       url: inputUrl.includes("trendyol.com") ? inputUrl : "https://www.trendyol.com",
     },
     {
@@ -137,7 +136,7 @@ function makeMockProduct(inputUrl: string) {
       price: 1299,
       shipping: 39,
       inStock: true,
-      url: "https://www.hepsiburada.com",
+      url: inputUrl.includes("hepsiburada.com") ? inputUrl : "https://www.hepsiburada.com",
     },
     {
       store: "Amazon",
@@ -194,6 +193,29 @@ function makeMockProduct(inputUrl: string) {
   };
 }
 
+function detectSource(u: string) {
+  const s = (u || "").toLowerCase();
+
+  // Trendyol
+  if (s.includes("trendyol.com")) return "trendyol";
+
+  // Hepsiburada (tüm varyasyonlar)
+  if (
+    s.includes("hepsiburada.com") ||
+    s.includes("www.hepsiburada.com") ||
+    s.includes("m.hepsiburada.com") ||
+    s.includes("hepsiburada.com.tr")
+  ) {
+    return "hepsiburada";
+  }
+
+  // Amazon (opsiyonel)
+  if (s.includes("amazon.")) return "amazon";
+
+  return "unknown";
+}
+
+
 export default function CheckClient() {
   const sp = useSearchParams();
 
@@ -203,39 +225,62 @@ export default function CheckClient() {
   const [manualUrl, setManualUrl] = useState<string>(u);
   const inputUrl = u || manualUrl;
 
-  const data = useMemo(() => makeMockProduct(inputUrl || "https://example.com"), [inputUrl]);
+  const source = useMemo(() => detectSource(inputUrl || ""), [inputUrl]);
 
-  // ✅ Canlı Trendyol fiyatı
-  const [livePrice, setLivePrice] = useState<number | null>(null);
-  const [liveLoading, setLiveLoading] = useState(false);
+  const base = useMemo(() => makeMockProduct(inputUrl || "https://example.com"), [inputUrl]);
+
+  // Trendyol live
+  const [tyPrice, setTyPrice] = useState<number | null>(null);
+  const [tyLoading, setTyLoading] = useState(false);
+
+  // Hepsiburada live
+  const [hbPrice, setHbPrice] = useState<number | null>(null);
+  const [hbLoading, setHbLoading] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
 
     async function run() {
-      // sadece Trendyol linkinde dene
-      if (!inputUrl || !inputUrl.includes("trendyol.com")) {
-        setLivePrice(null);
-        setLiveLoading(false);
-        return;
+      // reset defaults
+      if (source !== "trendyol") {
+        setTyPrice(null);
+        setTyLoading(false);
+      }
+      if (source !== "hepsiburada") {
+        setHbPrice(null);
+        setHbLoading(false);
       }
 
-      try {
-        setLiveLoading(true);
-        const r = await fetch(`/api/trendyol?u=${encodeURIComponent(inputUrl)}`, { cache: "no-store" });
-        const j = await r.json();
-
-        if (cancelled) return;
-
-        if (r.ok && typeof j?.price === "number") {
-          setLivePrice(j.price);
-        } else {
-          setLivePrice(null);
+      // Trendyol fetch
+      if (source === "trendyol") {
+        try {
+          setTyLoading(true);
+          const r = await fetch(`/api/trendyol?u=${encodeURIComponent(inputUrl)}`, { cache: "no-store" });
+          const j = await r.json();
+          if (cancelled) return;
+          if (r.ok && typeof j?.price === "number") setTyPrice(j.price);
+          else setTyPrice(null);
+        } catch {
+          if (!cancelled) setTyPrice(null);
+        } finally {
+          if (!cancelled) setTyLoading(false);
         }
-      } catch {
-        if (!cancelled) setLivePrice(null);
-      } finally {
-        if (!cancelled) setLiveLoading(false);
+      }
+
+      // Hepsiburada fetch
+      if (source === "hepsiburada") {
+        try {
+          setHbLoading(true);
+          const r = await fetch(`/api/hepsiburada?u=${encodeURIComponent(inputUrl)}`, { cache: "no-store" });
+          const j = await r.json();
+          if (cancelled) return;
+          if (r.ok && typeof j?.price === "number") setHbPrice(j.price);
+          else setHbPrice(null);
+        } catch {
+          if (!cancelled) setHbPrice(null);
+        } finally {
+          if (!cancelled) setHbLoading(false);
+        }
       }
     }
 
@@ -243,19 +288,18 @@ export default function CheckClient() {
     return () => {
       cancelled = true;
     };
-  }, [inputUrl]);
+  }, [inputUrl, source]);
 
-  // ✅ canlı fiyat sadece Trendyol teklifine yansısın (UI stabil)
+  // Offers = base offers + live override (UI stabil)
   const offers = useMemo(() => {
-    return data.offers.map((o) => {
-      if (o.store === "Trendyol" && typeof livePrice === "number") {
-        return { ...o, price: livePrice };
-      }
+    return base.offers.map((o) => {
+      if (o.store === "Trendyol" && typeof tyPrice === "number") return { ...o, price: tyPrice };
+      if (o.store === "Hepsiburada" && typeof hbPrice === "number") return { ...o, price: hbPrice };
       return o;
     });
-  }, [data.offers, livePrice]);
+  }, [base.offers, tyPrice, hbPrice]);
 
-  // ✅ en ucuz hesabını canlı fiyatla güncelle (sadece görüntü amaçlı)
+  // cheapest + marketAvg + deltaPct live’dan türetilir
   const cheapest = useMemo(() => {
     return offers
       .filter((o) => o.inStock)
@@ -270,14 +314,18 @@ export default function CheckClient() {
   }, [offers]);
 
   const deltaPct = useMemo(() => {
-    const ch = cheapest;
-    return ((ch.price + ch.shipping - marketAvg) / marketAvg) * 100;
+    return ((cheapest.price + cheapest.shipping - marketAvg) / marketAvg) * 100;
   }, [cheapest, marketAvg]);
 
-  const tone = scoreTone(data.score); // skor aynı: MVP’de sabit kalacak
+  const tone = scoreTone(base.score); // MVP: skor sabit kalsın
   const label = trendLabel(deltaPct);
+  const path = useMemo(() => simpleSparklinePath(base.points, 720, 180, 18), [base.points]);
 
-  const path = useMemo(() => simpleSparklinePath(data.points, 720, 180, 18), [data.points]);
+  const topBadge = useMemo(() => {
+    if (source === "trendyol") return tyLoading ? "Trendyol Canlı…" : "Trendyol Canlı";
+    if (source === "hepsiburada") return hbLoading ? "Hepsiburada Canlı…" : "Hepsiburada Canlı";
+    return "Mock Modu";
+  }, [source, tyLoading, hbLoading]);
 
   return (
     <main className="min-h-screen bg-[#0b1020] text-slate-100">
@@ -299,8 +347,12 @@ export default function CheckClient() {
           </div>
 
           <span className="hidden sm:inline-flex items-center gap-2 rounded-full bg-white/5 px-3 py-1 text-xs text-slate-200 ring-1 ring-white/10">
-            {inputUrl.includes("trendyol.com") ? (liveLoading ? "Canlı fiyat alınıyor…" : "Trendyol Canlı") : "Mock Modu"}
-            <span className={`h-1.5 w-1.5 rounded-full ${inputUrl.includes("trendyol.com") ? "bg-emerald-400" : "bg-slate-400"}`} />
+            {topBadge}
+            <span
+              className={`h-1.5 w-1.5 rounded-full ${
+                source === "unknown" ? "bg-slate-400" : "bg-emerald-400"
+              }`}
+            />
           </span>
         </div>
       </div>
@@ -314,13 +366,15 @@ export default function CheckClient() {
               <input
                 value={manualUrl}
                 onChange={(e) => setManualUrl(e.target.value)}
-                placeholder="Linki yapıştır (ör: Trendyol / Hepsiburada / Amazon)"
+                placeholder="Linki yapıştır (Trendyol / Hepsiburada / Amazon)"
                 className="w-full rounded-xl bg-[#0b1020]/60 px-4 py-3 text-sm text-slate-100 ring-1 ring-white/10 outline-none placeholder:text-slate-400 focus:ring-2 focus:ring-white/20"
               />
               <div className="mt-2 text-xs text-slate-400">
-                {inputUrl.includes("trendyol.com")
+                {source === "trendyol"
                   ? "Trendyol linklerinde fiyat canlı çekilir. Diğer her şey MVP’de mock kalır."
-                  : "Not: Şu an mock data gösteriyor. Trendyol linki verirsen fiyat canlı gelir."}
+                  : source === "hepsiburada"
+                  ? "Hepsiburada linklerinde fiyat canlı çekilir. Diğer her şey MVP’de mock kalır."
+                  : "Not: Şu an mock data gösteriyor. Trendyol veya Hepsiburada linki verirsen fiyat canlı gelir."}
               </div>
             </div>
           </div>
@@ -333,26 +387,26 @@ export default function CheckClient() {
               <div className="flex flex-col gap-4 sm:flex-row sm:items-start">
                 <div className="relative w-full overflow-hidden rounded-2xl bg-black/20 ring-1 ring-white/10 sm:h-36 sm:w-36">
                   {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img src={data.image} alt={data.title} className="h-44 w-full object-cover sm:h-36" loading="lazy" />
+                  <img src={base.image} alt={base.title} className="h-44 w-full object-cover sm:h-36" loading="lazy" />
                   <div className="absolute left-2 top-2 rounded-full bg-black/40 px-2 py-1 text-[11px] text-slate-100 ring-1 ring-white/10">
-                    {data.category}
+                    {base.category}
                   </div>
                 </div>
 
                 <div className="flex-1">
                   <div className="flex flex-wrap items-start justify-between gap-3">
                     <div>
-                      <h1 className="text-base font-semibold leading-snug sm:text-lg">{data.title}</h1>
+                      <h1 className="text-base font-semibold leading-snug sm:text-lg">{base.title}</h1>
                       <div className="mt-1 text-sm text-slate-300">
-                        Marka: <span className="text-slate-200">{data.brand}</span>
+                        Marka: <span className="text-slate-200">{base.brand}</span>
                       </div>
                     </div>
 
-                    {/* Score chip */}
+                    {/* Score */}
                     <div className={`shrink-0 rounded-2xl ${tone.bg} px-4 py-3 ring-1 ${tone.ring}`}>
                       <div className="flex items-center gap-3">
                         <div className="grid h-12 w-12 place-items-center rounded-2xl bg-white/5 ring-1 ring-white/10">
-                          <div className="text-[26px] leading-none font-extrabold">{data.score}</div>
+                          <div className="text-[26px] leading-none font-extrabold">{base.score}</div>
                         </div>
                         <div className="min-w-44">
                           <div className={`text-sm font-semibold ${tone.text}`}>{tone.label}</div>
@@ -365,9 +419,11 @@ export default function CheckClient() {
 
                   <div className="mt-4 flex flex-wrap items-center gap-2">
                     <span className={`inline-flex items-center rounded-full px-3 py-1 text-xs ${label.cls}`}>{label.t}</span>
+
                     <span className="text-xs text-slate-400">
                       Piyasa ort.: <span className="text-slate-200">{fmtTL(marketAvg)}</span>
                     </span>
+
                     <span className="text-xs text-slate-400">
                       Fark:{" "}
                       <span className="text-slate-200">
@@ -376,12 +432,15 @@ export default function CheckClient() {
                       </span>
                     </span>
 
-                    {inputUrl.includes("trendyol.com") && (
+                    {source === "trendyol" && (
                       <span className="text-xs text-slate-400">
-                        Canlı fiyat:{" "}
-                        <span className="text-slate-200">
-                          {liveLoading ? "…" : typeof livePrice === "number" ? "alındı" : "yok"}
-                        </span>
+                        Canlı fiyat: <span className="text-slate-200">{tyLoading ? "…" : typeof tyPrice === "number" ? "alındı" : "yok"}</span>
+                      </span>
+                    )}
+
+                    {source === "hepsiburada" && (
+                      <span className="text-xs text-slate-400">
+                        Canlı fiyat: <span className="text-slate-200">{hbLoading ? "…" : typeof hbPrice === "number" ? "alındı" : "yok"}</span>
                       </span>
                     )}
                   </div>
@@ -404,7 +463,7 @@ export default function CheckClient() {
                       <div className="text-xs text-slate-400">Stok</div>
                       <div className="mt-1 text-sm font-semibold">{cheapest.inStock ? "Stokta" : "Stok yok"}</div>
                       <div className="mt-1 text-[11px] text-slate-400">
-                        Güncellendi: {new Date(data.updatedAt).toLocaleString("tr-TR")}
+                        Güncellendi: {new Date(base.updatedAt).toLocaleString("tr-TR")}
                       </div>
                     </div>
                   </div>
@@ -422,8 +481,8 @@ export default function CheckClient() {
                 <div className="text-xs text-slate-300">
                   30g değişim:{" "}
                   <span className="text-slate-100">
-                    {data.changePct >= 0 ? "+" : ""}
-                    {data.changePct.toFixed(1)}%
+                    {base.changePct >= 0 ? "+" : ""}
+                    {base.changePct.toFixed(1)}%
                   </span>
                 </div>
               </div>
@@ -436,15 +495,15 @@ export default function CheckClient() {
                     ))}
                   </g>
                   <path d={path} fill="none" stroke="white" strokeWidth="3" opacity="0.85" />
-                  {data.points.map((pt, i) => {
-                    const prices = data.points.map((x) => x.p);
+                  {base.points.map((pt, i) => {
+                    const prices = base.points.map((x) => x.p);
                     const minP = Math.min(...prices);
                     const maxP = Math.max(...prices);
                     const span = Math.max(1, maxP - minP);
                     const pad = 18;
                     const innerW = 720 - pad * 2;
                     const innerH = 180 - pad * 2;
-                    const x = pad + (i * innerW) / Math.max(1, data.points.length - 1);
+                    const x = pad + (i * innerW) / Math.max(1, base.points.length - 1);
                     const y = pad + (1 - (pt.p - minP) / span) * innerH;
                     return (
                       <g key={pt.d}>
@@ -489,8 +548,23 @@ export default function CheckClient() {
                     const total = o.price + o.shipping;
                     const isBest = o.store === cheapest.store && o.inStock;
 
-                    // ✅ sadece en ucuz aktif link
+                    // ✅ sadece en ucuz butonu aktif
                     const canGo = isBest && !!o.url;
+
+                    const liveTag =
+                      o.store === "Trendyol" && source === "trendyol"
+                        ? tyLoading
+                          ? "Canlı…"
+                          : typeof tyPrice === "number"
+                          ? "Canlı"
+                          : "Mock"
+                        : o.store === "Hepsiburada" && source === "hepsiburada"
+                        ? hbLoading
+                          ? "Canlı…"
+                          : typeof hbPrice === "number"
+                          ? "Canlı"
+                          : "Mock"
+                        : null;
 
                     return (
                       <div
@@ -521,9 +595,9 @@ export default function CheckClient() {
                                 </span>
                               )}
 
-                              {o.store === "Trendyol" && inputUrl.includes("trendyol.com") && (
+                              {liveTag && (
                                 <span className="rounded-full bg-white/5 px-2 py-0.5 text-[11px] text-slate-200 ring-1 ring-white/10">
-                                  {liveLoading ? "Canlı…" : typeof livePrice === "number" ? "Canlı" : "Mock"}
+                                  {liveTag}
                                 </span>
                               )}
                             </div>
