@@ -1,3 +1,4 @@
+// src/app/check/ui.tsx
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
@@ -13,6 +14,12 @@ type Offer = {
 
 type Point = { d: string; p: number };
 
+function fmtTL(n: number) {
+  const s = Math.round(n).toString();
+  const withDots = s.replace(/\B(?=(\d{3})+(?!\d))/g, ".");
+  return `${withDots} TL`;
+}
+
 function tryParseHost(u: string) {
   try {
     const url = new URL(u);
@@ -20,12 +27,6 @@ function tryParseHost(u: string) {
   } catch {
     return "";
   }
-}
-
-function fmtTL(n: number) {
-  const s = Math.round(n).toString();
-  const withDots = s.replace(/\B(?=(\d{3})+(?!\d))/g, ".");
-  return `${withDots} TL`;
 }
 
 function clamp(n: number, a: number, b: number) {
@@ -78,7 +79,7 @@ function trendLabel(deltaPct: number) {
   return { t: "Piyasanın çok üstünde", cls: "bg-rose-500/15 text-rose-200 ring-1 ring-rose-400/40" };
 }
 
-function simpleSparklinePath(points: Point[], w = 640, h = 160, pad = 16) {
+function simpleSparklinePath(points: Point[], w = 720, h = 180, pad = 18) {
   if (!points.length) return "";
   const prices = points.map((x) => x.p);
   const minP = Math.min(...prices);
@@ -106,12 +107,116 @@ function first<T>(arr: T[]) {
   return arr[0];
 }
 
+function detectSource(u: string) {
+  const s = (u || "").toLowerCase();
+  if (s.includes("trendyol.com")) return "trendyol";
+  if (
+    s.includes("hepsiburada.com") ||
+    s.includes("www.hepsiburada.com") ||
+    s.includes("m.hepsiburada.com") ||
+    s.includes("hepsiburada.com.tr")
+  ) {
+    return "hepsiburada";
+  }
+  if (s.includes("amazon.")) return "amazon";
+  return "unknown";
+}
+
+function extractTrendyolId(u: string) {
+  try {
+    const url = new URL(u);
+    const m = url.pathname.match(/-p-(\d+)/i);
+    return m?.[1] || null;
+  } catch {
+    return null;
+  }
+}
+
+function extractHBCode(u: string) {
+  try {
+    const url = new URL(u);
+    const m = url.pathname.match(/-p-(HBCV[0-9A-Z]+)/i);
+    return m?.[1] || null;
+  } catch {
+    return null;
+  }
+}
+
+// ---------------- localStorage history (MVP SAFE) ----------------
+function todayKey() {
+  const d = new Date();
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
+function makeHistoryStorageKey(inputUrl: string) {
+  const source = detectSource(inputUrl);
+
+  if (source === "trendyol") {
+    const id = extractTrendyolId(inputUrl) || "unknown";
+    return `bikonomi:hist:trendyol:${id}`;
+  }
+  if (source === "hepsiburada") {
+    const code = extractHBCode(inputUrl) || "unknown";
+    return `bikonomi:hist:hepsiburada:${code}`;
+  }
+
+  try {
+    const u = new URL(inputUrl);
+    return `bikonomi:hist:${u.hostname}:${u.pathname.slice(0, 120)}`;
+  } catch {
+    return "bikonomi:hist:unknown";
+  }
+}
+
+function readHistory(key: string): Point[] {
+  try {
+    const raw = localStorage.getItem(key);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .filter((x) => x && typeof x.d === "string" && typeof x.p === "number")
+      .slice(-180);
+  } catch {
+    return [];
+  }
+}
+
+function writeHistory(key: string, points: Point[]) {
+  try {
+    localStorage.setItem(key, JSON.stringify(points.slice(-180)));
+  } catch {
+    // ignore
+  }
+}
+
+function upsertToday(points: Point[], price: number): Point[] {
+  const d = todayKey();
+  const next = points.slice();
+  if (next.length && next[next.length - 1].d === d) {
+    next[next.length - 1] = { d, p: price };
+    return next;
+  }
+  return [...next, { d, p: price }];
+}
+
+function pctChange(points: Point[]) {
+  if (points.length < 2) return 0;
+  const p0 = first(points).p;
+  const p1 = last(points).p;
+  return ((p1 - p0) / Math.max(1, p0)) * 100;
+}
+// ----------------------------------------------------------------
+
 function makeMockProduct(inputUrl: string) {
   const host = tryParseHost(inputUrl);
   const baseTitle = "LineDeck — 4 Katlı Modüler Raf (50x128 cm)";
   const title = host ? `${baseTitle} · ${host}` : baseTitle;
 
-  const points: Point[] = [
+  const mockPoints: Point[] = [
     { d: "G-30", p: 1299 },
     { d: "G-26", p: 1290 },
     { d: "G-22", p: 1279 },
@@ -158,22 +263,8 @@ function makeMockProduct(inputUrl: string) {
 
   const deltaPct = ((cheapest.price + cheapest.shipping - marketAvg) / marketAvg) * 100;
 
-  const p0 = first(points).p;
-  const p1 = last(points).p;
-  const changePct = ((p1 - p0) / Math.max(1, p0)) * 100;
-
-  const volatility = (() => {
-    const ps = points.map((x) => x.p);
-    const mean = ps.reduce((s, v) => s + v, 0) / ps.length;
-    const varr = ps.reduce((s, v) => s + (v - mean) * (v - mean), 0) / ps.length;
-    return Math.sqrt(varr);
-  })();
-
   let score = 65;
   score += clamp((-deltaPct) * 1.8, -18, 18);
-  score += clamp(-changePct * 0.6, -12, 12);
-  score += clamp(18 - volatility / 8, -10, 10);
-  if (!cheapest?.inStock) score -= 15;
   score = clamp(Math.round(score), 0, 100);
 
   return {
@@ -181,44 +272,15 @@ function makeMockProduct(inputUrl: string) {
     image: "https://dummyimage.com/640x640/111827/ffffff&text=Bikonomi",
     brand: "LineDeck",
     category: "Ev & Yaşam / Raf",
-    points,
+    points: mockPoints,
     offers,
-    cheapest,
-    marketAvg,
-    deltaPct,
     score,
-    changePct,
-    volatility,
     updatedAt: new Date().toISOString(),
   };
 }
 
-function detectSource(u: string) {
-  const s = (u || "").toLowerCase();
-
-  // Trendyol
-  if (s.includes("trendyol.com")) return "trendyol";
-
-  // Hepsiburada (tüm varyasyonlar)
-  if (
-    s.includes("hepsiburada.com") ||
-    s.includes("www.hepsiburada.com") ||
-    s.includes("m.hepsiburada.com") ||
-    s.includes("hepsiburada.com.tr")
-  ) {
-    return "hepsiburada";
-  }
-
-  // Amazon (opsiyonel)
-  if (s.includes("amazon.")) return "amazon";
-
-  return "unknown";
-}
-
-
 export default function CheckClient() {
   const sp = useSearchParams();
-
   const uRaw = sp.get("u") || "";
   const u = useMemo(() => uRaw.trim(), [uRaw]);
 
@@ -226,22 +288,32 @@ export default function CheckClient() {
   const inputUrl = u || manualUrl;
 
   const source = useMemo(() => detectSource(inputUrl || ""), [inputUrl]);
-
   const base = useMemo(() => makeMockProduct(inputUrl || "https://example.com"), [inputUrl]);
 
-  // Trendyol live
+  // live prices
   const [tyPrice, setTyPrice] = useState<number | null>(null);
   const [tyLoading, setTyLoading] = useState(false);
 
-  // Hepsiburada live
   const [hbPrice, setHbPrice] = useState<number | null>(null);
   const [hbLoading, setHbLoading] = useState(false);
 
+  // history
+  const storageKey = useMemo(() => makeHistoryStorageKey(inputUrl || ""), [inputUrl]);
+  const [historyPoints, setHistoryPoints] = useState<Point[]>([]);
+
+  useEffect(() => {
+    if (!inputUrl) return;
+    const pts = readHistory(storageKey);
+    setHistoryPoints(pts);
+  }, [storageKey, inputUrl]);
+
+  // fetch live price
   useEffect(() => {
     let cancelled = false;
 
     async function run() {
-      // reset defaults
+      if (!inputUrl) return;
+
       if (source !== "trendyol") {
         setTyPrice(null);
         setTyLoading(false);
@@ -251,7 +323,6 @@ export default function CheckClient() {
         setHbLoading(false);
       }
 
-      // Trendyol fetch
       if (source === "trendyol") {
         try {
           setTyLoading(true);
@@ -267,7 +338,6 @@ export default function CheckClient() {
         }
       }
 
-      // Hepsiburada fetch
       if (source === "hepsiburada") {
         try {
           setHbLoading(true);
@@ -290,7 +360,7 @@ export default function CheckClient() {
     };
   }, [inputUrl, source]);
 
-  // Offers = base offers + live override (UI stabil)
+  // offers with live override
   const offers = useMemo(() => {
     return base.offers.map((o) => {
       if (o.store === "Trendyol" && typeof tyPrice === "number") return { ...o, price: tyPrice };
@@ -299,7 +369,33 @@ export default function CheckClient() {
     });
   }, [base.offers, tyPrice, hbPrice]);
 
-  // cheapest + marketAvg + deltaPct live’dan türetilir
+  // when live comes, save to history (once per day)
+  useEffect(() => {
+    const live =
+      source === "trendyol" ? tyPrice :
+      source === "hepsiburada" ? hbPrice :
+      null;
+
+    if (typeof live !== "number") return;
+    if (!storageKey || storageKey === "bikonomi:hist:unknown") return;
+
+    setHistoryPoints((prev) => {
+      const next = upsertToday(prev, live);
+      writeHistory(storageKey, next);
+      return next;
+    });
+  }, [tyPrice, hbPrice, source, storageKey]);
+
+  const chartPoints = useMemo(() => {
+    if (historyPoints.length >= 2) return historyPoints.slice(-60);
+    return base.points;
+  }, [historyPoints, base.points]);
+
+  const chartMode = historyPoints.length >= 2 ? "gerçek" : "mock";
+  const changePct = useMemo(() => pctChange(chartPoints), [chartPoints]);
+  const path = useMemo(() => simpleSparklinePath(chartPoints), [chartPoints]);
+
+  // cheapest + market + delta
   const cheapest = useMemo(() => {
     return offers
       .filter((o) => o.inStock)
@@ -313,13 +409,9 @@ export default function CheckClient() {
     return sum / Math.max(1, inStocks.length);
   }, [offers]);
 
-  const deltaPct = useMemo(() => {
-    return ((cheapest.price + cheapest.shipping - marketAvg) / marketAvg) * 100;
-  }, [cheapest, marketAvg]);
-
-  const tone = scoreTone(base.score); // MVP: skor sabit kalsın
+  const deltaPct = useMemo(() => ((cheapest.price + cheapest.shipping - marketAvg) / marketAvg) * 100, [cheapest, marketAvg]);
   const label = trendLabel(deltaPct);
-  const path = useMemo(() => simpleSparklinePath(base.points, 720, 180, 18), [base.points]);
+  const tone = scoreTone(base.score);
 
   const topBadge = useMemo(() => {
     if (source === "trendyol") return tyLoading ? "Trendyol Canlı…" : "Trendyol Canlı";
@@ -329,7 +421,6 @@ export default function CheckClient() {
 
   return (
     <main className="min-h-screen bg-[#0b1020] text-slate-100">
-      {/* Top bar */}
       <div className="sticky top-0 z-40 border-b border-white/10 bg-[#0b1020]/80 backdrop-blur">
         <div className="mx-auto flex w-full max-w-5xl items-center justify-between px-4 py-3">
           <div className="flex items-center gap-3">
@@ -348,17 +439,12 @@ export default function CheckClient() {
 
           <span className="hidden sm:inline-flex items-center gap-2 rounded-full bg-white/5 px-3 py-1 text-xs text-slate-200 ring-1 ring-white/10">
             {topBadge}
-            <span
-              className={`h-1.5 w-1.5 rounded-full ${
-                source === "unknown" ? "bg-slate-400" : "bg-emerald-400"
-              }`}
-            />
+            <span className={`h-1.5 w-1.5 rounded-full ${source === "unknown" ? "bg-slate-400" : "bg-emerald-400"}`} />
           </span>
         </div>
       </div>
 
       <div className="mx-auto w-full max-w-5xl px-4 py-5 sm:py-8">
-        {/* URL input */}
         <div className="mb-5 rounded-2xl bg-white/5 p-3 ring-1 ring-white/10 sm:mb-7 sm:p-4">
           <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
             <div className="text-sm text-slate-200 sm:min-w-32">Ürün linki</div>
@@ -366,22 +452,17 @@ export default function CheckClient() {
               <input
                 value={manualUrl}
                 onChange={(e) => setManualUrl(e.target.value)}
-                placeholder="Linki yapıştır (Trendyol / Hepsiburada / Amazon)"
+                placeholder="Linki yapıştır (Trendyol / Hepsiburada)"
                 className="w-full rounded-xl bg-[#0b1020]/60 px-4 py-3 text-sm text-slate-100 ring-1 ring-white/10 outline-none placeholder:text-slate-400 focus:ring-2 focus:ring-white/20"
               />
               <div className="mt-2 text-xs text-slate-400">
-                {source === "trendyol"
-                  ? "Trendyol linklerinde fiyat canlı çekilir. Diğer her şey MVP’de mock kalır."
-                  : source === "hepsiburada"
-                  ? "Hepsiburada linklerinde fiyat canlı çekilir. Diğer her şey MVP’de mock kalır."
-                  : "Not: Şu an mock data gösteriyor. Trendyol veya Hepsiburada linki verirsen fiyat canlı gelir."}
+                Grafik localStorage ile birikir: her gün 1 nokta. (DB yok, risk yok)
               </div>
             </div>
           </div>
         </div>
 
         <div className="grid grid-cols-1 gap-5 lg:grid-cols-[1.2fr_.8fr] lg:gap-6">
-          {/* Left */}
           <section className="space-y-5">
             <div className="rounded-3xl bg-white/5 p-4 ring-1 ring-white/10 sm:p-5">
               <div className="flex flex-col gap-4 sm:flex-row sm:items-start">
@@ -402,7 +483,6 @@ export default function CheckClient() {
                       </div>
                     </div>
 
-                    {/* Score */}
                     <div className={`shrink-0 rounded-2xl ${tone.bg} px-4 py-3 ring-1 ${tone.ring}`}>
                       <div className="flex items-center gap-3">
                         <div className="grid h-12 w-12 place-items-center rounded-2xl bg-white/5 ring-1 ring-white/10">
@@ -419,11 +499,9 @@ export default function CheckClient() {
 
                   <div className="mt-4 flex flex-wrap items-center gap-2">
                     <span className={`inline-flex items-center rounded-full px-3 py-1 text-xs ${label.cls}`}>{label.t}</span>
-
                     <span className="text-xs text-slate-400">
                       Piyasa ort.: <span className="text-slate-200">{fmtTL(marketAvg)}</span>
                     </span>
-
                     <span className="text-xs text-slate-400">
                       Fark:{" "}
                       <span className="text-slate-200">
@@ -431,18 +509,6 @@ export default function CheckClient() {
                         {deltaPct.toFixed(1)}%
                       </span>
                     </span>
-
-                    {source === "trendyol" && (
-                      <span className="text-xs text-slate-400">
-                        Canlı fiyat: <span className="text-slate-200">{tyLoading ? "…" : typeof tyPrice === "number" ? "alındı" : "yok"}</span>
-                      </span>
-                    )}
-
-                    {source === "hepsiburada" && (
-                      <span className="text-xs text-slate-400">
-                        Canlı fiyat: <span className="text-slate-200">{hbLoading ? "…" : typeof hbPrice === "number" ? "alındı" : "yok"}</span>
-                      </span>
-                    )}
                   </div>
 
                   <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-3">
@@ -450,7 +516,6 @@ export default function CheckClient() {
                       <div className="text-xs text-slate-400">En ucuz mağaza</div>
                       <div className="mt-1 text-sm font-semibold">{cheapest.store}</div>
                     </div>
-
                     <div className="rounded-2xl bg-black/20 p-3 ring-1 ring-white/10">
                       <div className="text-xs text-slate-400">Toplam fiyat</div>
                       <div className="mt-1 text-sm font-semibold">{fmtTL(cheapest.price + cheapest.shipping)}</div>
@@ -458,7 +523,6 @@ export default function CheckClient() {
                         {cheapest.shipping === 0 ? "Kargo dahil" : `Kargo: ${fmtTL(cheapest.shipping)}`}
                       </div>
                     </div>
-
                     <div className="rounded-2xl bg-black/20 p-3 ring-1 ring-white/10">
                       <div className="text-xs text-slate-400">Stok</div>
                       <div className="mt-1 text-sm font-semibold">{cheapest.inStock ? "Stokta" : "Stok yok"}</div>
@@ -471,18 +535,19 @@ export default function CheckClient() {
               </div>
             </div>
 
-            {/* Chart */}
             <div className="rounded-3xl bg-white/5 p-4 ring-1 ring-white/10 sm:p-5">
               <div className="flex flex-wrap items-end justify-between gap-3">
                 <div>
                   <div className="text-sm font-semibold">Fiyat Geçmişi</div>
-                  <div className="mt-1 text-xs text-slate-400">Son 30 gün (mock)</div>
+                  <div className="mt-1 text-xs text-slate-400">
+                    Mod: {chartMode} · Nokta: <span className="text-slate-200">{chartPoints.length}</span>
+                  </div>
                 </div>
                 <div className="text-xs text-slate-300">
-                  30g değişim:{" "}
+                  Değişim:{" "}
                   <span className="text-slate-100">
-                    {base.changePct >= 0 ? "+" : ""}
-                    {base.changePct.toFixed(1)}%
+                    {changePct >= 0 ? "+" : ""}
+                    {changePct.toFixed(1)}%
                   </span>
                 </div>
               </div>
@@ -495,30 +560,24 @@ export default function CheckClient() {
                     ))}
                   </g>
                   <path d={path} fill="none" stroke="white" strokeWidth="3" opacity="0.85" />
-                  {base.points.map((pt, i) => {
-                    const prices = base.points.map((x) => x.p);
-                    const minP = Math.min(...prices);
-                    const maxP = Math.max(...prices);
-                    const span = Math.max(1, maxP - minP);
-                    const pad = 18;
-                    const innerW = 720 - pad * 2;
-                    const innerH = 180 - pad * 2;
-                    const x = pad + (i * innerW) / Math.max(1, base.points.length - 1);
-                    const y = pad + (1 - (pt.p - minP) / span) * innerH;
-                    return (
-                      <g key={pt.d}>
-                        <circle cx={x} cy={y} r="5" fill="white" opacity="0.9" />
-                      </g>
-                    );
-                  })}
                 </svg>
+              </div>
+
+              <div className="mt-3 flex flex-wrap gap-2">
+                {chartPoints.slice(-10).map((pt, idx) => (
+                  <span
+                    key={`${pt.d}-${idx}`}
+                    className="inline-flex items-center gap-2 rounded-full bg-white/5 px-3 py-1 text-xs text-slate-200 ring-1 ring-white/10"
+                  >
+                    <span className="text-slate-400">{pt.d}</span>
+                    <span className="font-semibold">{fmtTL(pt.p)}</span>
+                  </span>
+                ))}
               </div>
             </div>
           </section>
 
-          {/* Right */}
           <aside className="space-y-5">
-            {/* Ad slot */}
             <div className="rounded-3xl bg-gradient-to-br from-white/10 to-white/5 p-5 ring-1 ring-white/10">
               <div className="text-xs text-slate-300">Sponsor Alanı</div>
               <div className="mt-2 text-lg font-semibold leading-snug">Buraya reklam / kampanya alanı</div>
@@ -528,7 +587,6 @@ export default function CheckClient() {
               </div>
             </div>
 
-            {/* Offers */}
             <div className="rounded-3xl bg-white/5 p-4 ring-1 ring-white/10 sm:p-5">
               <div className="flex items-end justify-between gap-3">
                 <div>
@@ -547,24 +605,7 @@ export default function CheckClient() {
                   .map((o) => {
                     const total = o.price + o.shipping;
                     const isBest = o.store === cheapest.store && o.inStock;
-
-                    // ✅ sadece en ucuz butonu aktif
                     const canGo = isBest && !!o.url;
-
-                    const liveTag =
-                      o.store === "Trendyol" && source === "trendyol"
-                        ? tyLoading
-                          ? "Canlı…"
-                          : typeof tyPrice === "number"
-                          ? "Canlı"
-                          : "Mock"
-                        : o.store === "Hepsiburada" && source === "hepsiburada"
-                        ? hbLoading
-                          ? "Canlı…"
-                          : typeof hbPrice === "number"
-                          ? "Canlı"
-                          : "Mock"
-                        : null;
 
                     return (
                       <div
@@ -577,7 +618,6 @@ export default function CheckClient() {
                           <div>
                             <div className="flex items-center gap-2">
                               <div className="text-sm font-semibold">{o.store}</div>
-
                               {isBest && (
                                 <>
                                   <span className="rounded-full bg-emerald-500/20 px-2 py-0.5 text-[11px] text-emerald-200 ring-1 ring-emerald-400/30">
@@ -588,16 +628,9 @@ export default function CheckClient() {
                                   </span>
                                 </>
                               )}
-
                               {!o.inStock && (
                                 <span className="rounded-full bg-rose-500/20 px-2 py-0.5 text-[11px] text-rose-200 ring-1 ring-rose-400/30">
                                   Stok yok
-                                </span>
-                              )}
-
-                              {liveTag && (
-                                <span className="rounded-full bg-white/5 px-2 py-0.5 text-[11px] text-slate-200 ring-1 ring-white/10">
-                                  {liveTag}
                                 </span>
                               )}
                             </div>
