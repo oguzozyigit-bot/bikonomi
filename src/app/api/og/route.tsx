@@ -9,38 +9,49 @@ export async function GET(req: Request) {
   const decision = searchParams.get("decision") ?? "DİKKAT";
   const title = searchParams.get("title") ?? "Bikonomi Skoru";
 
-  return new ImageResponse(
-    (
+  // ❗️ÖNEMLİ: JSX DOĞRUDAN veriliyor, FUNCTION YOK
+  const element = (
+    <div
+      style={{
+        width: "1200px",
+        height: "630px",
+        display: "flex",
+        flexDirection: "column",
+        justifyContent: "center",
+        alignItems: "center",
+        backgroundColor: "#0f766e",
+        color: "white",
+        fontFamily: "Arial, Helvetica, sans-serif",
+      }}
+    >
+      <div style={{ fontSize: "56px", fontWeight: 800, marginBottom: "24px" }}>
+        Bikonomi
+      </div>
+
+      <div style={{ fontSize: "40px", marginBottom: "12px" }}>
+        {title}
+      </div>
+
+      <div style={{ fontSize: "72px", fontWeight: 900, marginBottom: "12px" }}>
+        {score}
+      </div>
+
       <div
         style={{
-          width: "1200px",
-          height: "630px",
-          display: "flex",
-          flexDirection: "column",
-          justifyContent: "center",
-          alignItems: "center",
-          background: "#0f766e",
-          color: "white",
-          fontSize: "48px",
+          padding: "12px 32px",
+          borderRadius: "999px",
+          backgroundColor: "#111827",
+          fontSize: "32px",
           fontWeight: 700,
-          fontFamily: "Arial, Helvetica, sans-serif",
         }}
       >
-        <div style={{ fontSize: "56px", marginBottom: "24px" }}>Bikonomi</div>
-        <div style={{ fontSize: "40px", marginBottom: "12px" }}>{title}</div>
-        <div style={{ fontSize: "72px", marginBottom: "12px" }}>{score}</div>
-        <div
-          style={{
-            padding: "12px 32px",
-            borderRadius: "999px",
-            background: "#111827",
-            fontSize: "32px",
-          }}
-        >
-          {decision}
-        </div>
+        {decision}
       </div>
-    ),
-    { width: 1200, height: 630 }
+    </div>
   );
+
+  return new ImageResponse(element, {
+    width: 1200,
+    height: 630,
+  });
 }
