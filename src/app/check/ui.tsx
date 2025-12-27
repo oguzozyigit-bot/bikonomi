@@ -469,18 +469,61 @@ export default function CheckClient() {
 
               {/* ✅ DEBUG BUTONLARI URL KUTUSUNUN ALTINDA */}
              {debug && (
-  <div className="relative z-50 mt-3 flex flex-wrap gap-2">
-                  <button
-                    className="rounded-xl bg-white px-3 py-2 text-xs font-semibold text-black ring-1 ring-white/20"
-                    onClick={() => {
-                      const live = currentLive();
-                      if (typeof live !== "number") return;
+{debug && (
+  <div
+    className="fixed bottom-4 right-4 z-[99999] pointer-events-auto"
+    style={{ zIndex: 99999 }}
+  >
+    <div className="rounded-2xl bg-[#0b1020]/95 p-3 ring-1 ring-white/15 backdrop-blur">
+      <div className="mb-2 text-xs text-slate-200">
+        Debug Panel
+        <span className="ml-2 text-slate-400">(tıklanabilir)</span>
+      </div>
 
-                      setHistoryPoints((prev) => {
-                        const next = appendDebugPoint(prev, live);
-                        writeHistory(storageKey, next);
-                        return next;
-                      });
+      <div className="flex flex-wrap gap-2">
+        <button
+          className="rounded-xl bg-white px-3 py-2 text-xs font-semibold text-black ring-1 ring-white/20"
+          onClick={() => {
+            const live =
+              source === "trendyol" ? (typeof tyPrice === "number" ? tyPrice : null) :
+              source === "hepsiburada" ? (typeof hbPrice === "number" ? hbPrice : null) :
+              null;
+
+            if (typeof live !== "number") return;
+
+            setHistoryPoints((prev) => {
+              const d = new Date();
+              const key =
+                `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")} ` +
+                `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}:${String(d.getSeconds()).padStart(2, "0")}`;
+
+              const next = [...prev, { d: key, p: live }].slice(-180);
+              writeHistory(storageKey, next);
+              return next;
+            });
+          }}
+        >
+          + Nokta ekle
+        </button>
+
+        <button
+          className="rounded-xl bg-white/10 px-3 py-2 text-xs font-semibold text-slate-200 ring-1 ring-white/10"
+          onClick={() => {
+            writeHistory(storageKey, []);
+            setHistoryPoints([]);
+          }}
+        >
+          Sıfırla
+        </button>
+      </div>
+
+      <div className="mt-2 max-w-[360px] text-[10px] text-slate-400 break-all">
+        {storageKey}
+      </div>
+    </div>
+  </div>
+)}
+;
                     }}
                     title="Dakika bazlı test noktası ekler"
                   >
